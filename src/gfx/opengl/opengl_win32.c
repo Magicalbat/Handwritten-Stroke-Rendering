@@ -216,6 +216,7 @@ void gfx_win_destroy(gfx_window* win) {
 void gfx_win_process_events(gfx_window* win) {
     memcpy(win->prev_mouse_buttons, win->mouse_buttons, GFX_NUM_MOUSE_BUTTONS);
     memcpy(win->prev_keys, win->keys, GFX_NUM_KEYS);
+    win->mouse_scroll = 0;
 
     MSG msg = { 0 };
     while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -262,6 +263,10 @@ static LRESULT CALLBACK w32_window_proc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
         } break;
         case WM_RBUTTONUP: {
             win->mouse_buttons[GFX_MB_RIGHT] = false;
+        } break;
+
+        case WM_MOUSEWHEEL: {
+            win->mouse_scroll = SIGN(GET_WHEEL_DELTA_WPARAM(wParam));
         } break;
 
         case WM_KEYDOWN: {

@@ -210,10 +210,13 @@ u64 os_now_usec(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (u64)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
+void os_sleep_ms(u64 ms) {
+    usleep(ms * 1000);
+}
 
 #elif defined(PLATFORM_WIN32)
 
-/*static u64 w32_ticks_per_sec = 1;
+static u64 w32_ticks_per_sec = 1;
 void os_time_init(void) {
     LARGE_INTEGER perf_freq;
     if (QueryPerformanceFrequency(&perf_freq)) {
@@ -232,7 +235,10 @@ u64 os_now_usec(void) {
         fprintf(stderr, "Failed to retrive time in micro seconds\n");
     }
     return out;
-}*/
+}
+void os_sleep_ms(u64 ms) {
+    Sleep(ms);
+}
 #endif
 
 // Line vertex data
@@ -642,7 +648,7 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        usleep(8000);
+        os_sleep_ms(8);
     }
 
     glDeleteBuffers(1, &corner_instance_buffer);
