@@ -3,3 +3,4 @@ bin-int
 Makefile
 compile_commands.json
 .cache
+**.bat

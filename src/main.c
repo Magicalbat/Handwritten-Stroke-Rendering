@@ -69,6 +69,8 @@ static const char* line_seg_frag = GLSL_SOURCE(
     }
 );
 
+#define TANGENT_EPSILON 1e-5
+
 static const char* corner_vert = GLSL_SOURCE(
     330,
     layout (location = 0) in vec2 a_p0;
@@ -105,12 +107,24 @@ static const char* corner_vert = GLSL_SOURCE(
 
         display_width = length((u_view_mat * vec3(n1 * line_width, 0.0)).xy * (u_screen * 0.5));
 
-        vec2 tangent = normalize(l1 + l2);
-        vec2 miter = vec2(-tangent.y, tangent.x);
-        float miter_scale = 1.0 / dot(miter, n1);
+        vec2 line_sum = l1 + l2;
+        vec2 tangent;
+        vec2 miter;
+        float miter_scale;
+        if (dot(line_sum, line_sum) < TANGENT_EPSILON) {
+            tangent = l1;
+            miter = n1;
+            miter_scale = 1.0;
+        } else {
+            tangent = normalize(l1 + l2);
+            miter = vec2(-tangent.y, tangent.x);
+            miter_scale = 1.0 / dot(miter, n1);
+        }
+
 
         float half_w = a_line_width * 0.5;
         float s = -sign(crs(p1 - p0, p2 - p1));
+        if (s == 0.0) { s = 1.0; }
 
         // Points on the middle of the lines
         vec2 l1_p = (p1 - miter * (s * half_w * miter_scale)) + n1 * (s * half_w);
@@ -131,16 +145,22 @@ static const char* corner_vert = GLSL_SOURCE(
 
         // gl_VertexID == 1 || gl_VertexID == 3
         if ((gl_VertexID % 2) == 1) {
-            // Points for line cap calculations
-            vec2 i1 = p1 + miter * (s * half_w);
-            vec2 i2 = i1 - tangent;
-            vec2 i3 = (p1 - miter * (s * half_w * miter_scale)) + (n1 * s * a_line_width);
-            vec2 i4 = i3 + l1;
+            if (dot(line_sum, line_sum) < TANGENT_EPSILON) {
+                pos = gl_VertexID == 1 ?
+                    p1 + n1 * s * half_w + l1 * line_width :
+                    p1 - n1 * s * half_w + l1 * line_width;
+            } else {
+                // Points for line cap calculations
+                vec2 i1 = p1 + miter * (s * half_w);
+                vec2 i2 = i1 - tangent;
+                vec2 i3 = (p1 - miter * (s * half_w * miter_scale)) + (n1 * s * a_line_width);
+                vec2 i4 = i3 + l1;
 
-            vec2 c1 = (l1 * -crs(i1, i2) - tangent * crs(i3, i4)) / crs(tangent, -l1);
-            vec2 c2 = c1 + 2.0 * (i1 - c1);
+                vec2 c1 = (l1 * -crs(i1, i2) - tangent * crs(i3, i4)) / crs(tangent, -l1);
+                vec2 c2 = c1 + 2.0 * (i1 - c1);
 
-            pos = gl_VertexID == 1 ? c1 : c2;
+                pos = gl_VertexID == 1 ? c1 : c2;
+            }
         } else if (gl_VertexID == 2) {
             pos = t1_unclamped > t2_unclamped ?
                 l1_p - n1 * s * half_w : l2_p - n2 * s * half_w;
@@ -149,28 +169,8 @@ static const char* corner_vert = GLSL_SOURCE(
                 l1_p + n1 * s * half_w : l2_p + n2 * s * half_w;
         }
 
-        // TODO: make faster?
-        /*switch (gl_VertexID) {
-            case 0:
-                pos = l1_p + n1 * s * half_w;
-                break;
-            case 1:
-                pos = c1;
-                break;
-            case 2:
-                pos = t1_unclamped > t2_unclamped ?
-                    l1_p - n1 * s * half_w : l2_p - n2 * s * half_w;
-                break;
-            case 3:
-                pos = c2;
-                break;
-            case 4:
-                pos = l2_p + n2 * s * half_w;
-                break;
-        }*/
-
-       vec2 screen_pos = (u_view_mat * vec3(pos, 1.0)).xy;
-       gl_Position = vec4(screen_pos, 0.0, 1.0);
+        vec2 screen_pos = (u_view_mat * vec3(pos, 1.0)).xy;
+        gl_Position = vec4(screen_pos, 0.0, 1.0);
     }
 );
 
@@ -324,8 +324,6 @@ int main(void) {
     glUseProgram(line_seg_program);
     u32 line_seg_view_mat_loc = glGetUniformLocation(line_seg_program, "u_view_mat");
     u32 line_seg_display_width_loc = glGetUniformLocation(line_seg_program, "u_display_width");
-    //u32 line_seg_width_loc = glGetUniformLocation(line_seg_program, "u_width");
-    //u32 line_seg_screen_loc = glGetUniformLocation(line_seg_program, "u_screen");
 
     glUseProgram(corner_program);
     u32 corner_view_mat_loc = glGetUniformLocation(corner_program, "u_view_mat");
@@ -469,9 +467,21 @@ int main(void) {
         vec2f n1 = vec2f_prp(l1);
         vec2f l2 = vec2f_nrm(vec2f_sub(p2, p1));
         vec2f n2 = vec2f_prp(l2);
-        vec2f tangent = vec2f_nrm(vec2f_add(l1, l2));
-        vec2f miter = vec2f_prp(tangent);
-        f32 miter_scale = 1.0f / vec2f_dot(miter, n1);
+
+        // Avoiding issues with infinite miter projection
+        vec2f line_sum = vec2f_add(l1, l2);
+        vec2f tangent;
+        vec2f miter;
+        f32 miter_scale;
+        if (vec2f_sqr_len(line_sum) < TANGENT_EPSILON) {
+            tangent = l1;
+            miter = n1;
+            miter_scale = 1.0f;
+        } else {
+            tangent = vec2f_nrm(vec2f_add(l1, l2));
+            miter = vec2f_prp(tangent);
+            miter_scale = 1.0f / vec2f_dot(miter, n1);
+        }
 
         f32 w = line_width * 0.5f;
         f32 line_cross = vec2f_crs(vec2f_sub(p1, p0), vec2f_sub(p2, p1));
@@ -484,7 +494,7 @@ int main(void) {
         line_verts[6] = (line_vert){ vec2f_sub(p2, vec2f_scl(n2, w)) };
         line_verts[7] = (line_vert){ vec2f_add(p2, vec2f_scl(n2, w)) };
 
-        if (miter_scale < 1.5f) {
+        if (miter_scale < 1.5f && vec2f_sqr_len(line_sum) > TANGENT_EPSILON) {
             num_corner_instances = 0;
 
             line_verts[2] = (line_vert){ vec2f_sub(p1, vec2f_scl(miter, w * miter_scale)) };
@@ -591,7 +601,7 @@ int main(void) {
         // Corner draw
         glUseProgram(corner_program);
         glUniformMatrix3fv(corner_view_mat_loc, 1, GL_FALSE, view_mat.m);
-        glUniform4f(corner_col_loc, 0.0f, 1.0f, 1.0f, 1.0f);
+        glUniform4f(corner_col_loc, 1.0f, 1.0f, 1.0f, 1.0f);
         glUniform2f(corner_screen_loc, win->width, win->height);
 
         glBindVertexArray(corner_vert_array);
@@ -644,7 +654,6 @@ int main(void) {
         glDrawElements(GL_TRIANGLES, num_line_indices, GL_UNSIGNED_INT, NULL);
 
         glDisableVertexAttribArray(0);
-        //glDisableVertexAttribArray(1);
 
         gfx_win_swap_buffers(win);
 
