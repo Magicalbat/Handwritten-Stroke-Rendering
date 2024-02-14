@@ -59,13 +59,14 @@ static const char* line_seg_frag = GLSL_SOURCE(
     330,
     layout (location = 0) out vec4 out_col;
 
+    uniform vec4 u_col;
     uniform float u_display_width;
 
     in float side;
 
     void main() {
         float b = smoothstep(0.0, LINE_AA_SMOOTHING / u_display_width, 1.0 - abs(side));
-        out_col = vec4(1.0, 1.0, 1.0, b);
+        out_col = vec4(u_col.xyz, u_col.w * b);
     }
 );
 
@@ -124,6 +125,7 @@ static const char* corner_vert = GLSL_SOURCE(
 
         float half_w = a_line_width * 0.5;
         float s = -sign(crs(p1 - p0, p2 - p1));
+        // TODO: Is this line necessary?
         if (s == 0.0) { s = 1.0; }
 
         // Points on the middle of the lines
@@ -151,6 +153,8 @@ static const char* corner_vert = GLSL_SOURCE(
                     p1 - n1 * s * half_w + l1 * line_width;
             } else {
                 // Points for line cap calculations
+                // (i1, i2) and (i3, i4) define two lines
+                // These verts sit at the intersection of those lines
                 vec2 i1 = p1 + miter * (s * half_w);
                 vec2 i2 = i1 - tangent;
                 vec2 i3 = (p1 - miter * (s * half_w * miter_scale)) + (n1 * s * a_line_width);
@@ -255,6 +259,7 @@ typedef struct {
     f32 line_width;
 } line_corner;
 
+/*
 // Right now, this value is arbitrary
 #define LINE_POINT_BUCKET_SIZE 64
 
@@ -263,33 +268,61 @@ typedef struct line_point_bucket {
     vec2f points[LINE_POINT_BUCKET_SIZE];
     struct line_point_bucket* next;
 } line_point_bucket;
+*/
 
 // TODO: make free list allocator
 
 typedef struct {
+    u32 line_program;
+    u32 line_view_mat_loc;
+    u32 line_display_width_loc;
+    u32 line_col_loc;
+
+    u32 corner_program;
+    u32 corner_view_mat_loc;
+    u32 corner_screen_loc;
+    u32 corner_col_loc;
+} draw_lines_shaders;
+
+draw_lines_shaders* draw_lines_shaders_create(mg_arena* arena) {
+    draw_lines_shaders* shaders = MGA_PUSH_ZERO_STRUCT(arena, draw_lines_shaders);
+
+    shaders->line_program = glh_create_shader(line_seg_vert, line_seg_frag);
+    shaders->corner_program = glh_create_shader(corner_vert, corner_frag);
+
+    glUseProgram(shaders->line_program);
+    shaders->line_view_mat_loc = glGetUniformLocation(shaders->line_program, "u_view_mat");
+    shaders->line_display_width_loc = glGetUniformLocation(shaders->line_program, "u_display_width");
+    shaders->line_col_loc = glGetUniformLocation(shaders->line_program, "u_col");
+
+    glUseProgram(shaders->corner_program);
+    shaders->corner_view_mat_loc = glGetUniformLocation(shaders->corner_program, "u_view_mat");
+    shaders->corner_screen_loc = glGetUniformLocation(shaders->corner_program, "u_screen");
+    shaders->corner_col_loc = glGetUniformLocation(shaders->corner_program, "u_col");
+
+    glUseProgram(0);
+
+    return shaders;
+}
+
+void draw_lines_shaders_destroy(draw_lines_shaders* shaders) {
+    glDeleteProgram(shaders->line_program);
+    glDeleteProgram(shaders->corner_program);
+}
+
+// Static lines right now
+// TODO: dynamically add points
+typedef struct {
     vec4f color;
     f32 width;
 
-    // Capacities of GL buffers
-    // Sizes of data (in buckets and data);
-
-    // Number of line segment verts
-    u32 verts_capcity;
-    u32 verts_size;
-
-    // Number of line segment indices
-    u32 indices_capacity;
-    u32 indices_size;
-
-    // Number of corner instances
-    u32 corners_capacity;
-    u32 corner_size;
-
     // Number of total points
     u32 num_points;
-    // Linked list of point buckets
-    line_point_bucket* points_first;
-    line_point_bucket* points_last;
+    vec2f* points;
+
+    u32 num_verts;
+    u32 num_indices;
+    u32 num_corners;
     
     // GL Stuff
     u32 segment_array;
@@ -298,7 +331,349 @@ typedef struct {
     u32 vert_buffer;
     u32 index_buffer;
     u32 corner_buffer;
-} gfx_lines;
+} draw_lines;
+
+#define LINE_MITER_LIMIT 1.5f
+
+b32 _is_corner(vec2f p0, vec2f p1, vec2f p2) {
+    vec2f l1 = vec2f_nrm(vec2f_sub(p1, p0));
+    vec2f n1 = vec2f_prp(l1);
+    vec2f l2 = vec2f_nrm(vec2f_sub(p2, p1));
+
+    // Avoiding issues with infinite miter projection
+    vec2f line_sum = vec2f_add(l1, l2);
+    vec2f tangent;
+    f32 miter_scale;
+    if (vec2f_sqr_len(line_sum) < TANGENT_EPSILON) {
+        tangent = l1;
+        miter_scale = 1.0f;
+    } else {
+        tangent = vec2f_nrm(vec2f_add(l1, l2));
+        vec2f miter = vec2f_prp(tangent);
+        miter_scale = 1.0f / vec2f_dot(miter, n1);
+    }
+
+    return miter_scale >= LINE_MITER_LIMIT || vec2f_sqr_len(vec2f_add(l1, l2)) <= TANGENT_EPSILON;
+}
+
+// Creates the OpenGL geometry with the new width and color
+void draw_lines_update(draw_lines* lines, f32 line_width) {
+    if (lines == NULL || lines->num_points == 0) {
+        fprintf(stderr, "Cannot update lines: invalid lines object\n");
+        return;
+    }
+
+    lines->width = line_width;
+
+    mga_temp scratch = mga_scratch_get(NULL, 0);
+
+    line_vert* verts = MGA_PUSH_ZERO_ARRAY(scratch.arena, line_vert, lines->num_verts);
+    line_corner* corners = MGA_PUSH_ZERO_ARRAY(scratch.arena, line_corner, lines->num_corners);
+    
+    u32 num_verts = 0;
+    u32 num_corners = 0;
+
+    if (lines->num_points == 1) {
+        // Two corners form a circle here
+        corners[num_corners++] = (line_corner){
+            vec2f_add(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            lines->points[0],
+            vec2f_add(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            lines->width
+        };
+        corners[num_corners++] = (line_corner){
+            vec2f_sub(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            lines->points[0],
+            vec2f_sub(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            lines->width
+        };
+    } else {
+        // Points
+        vec2f p0, p1, p2;
+        // Lines and normals
+        vec2f l1, n1, l2, n2;
+
+        f32 half_w = lines->width * 0.5f;
+        
+        p0 = lines->points[0];
+        p1 = lines->points[1];
+
+        l1 = vec2f_nrm(vec2f_sub(p1, p0));
+        n1 = vec2f_prp(l1);
+
+        // Corner for rounded line cap
+        corners[num_corners++] = (line_corner){ p1, p0, p1, lines->width };
+
+        verts[num_verts++] = (line_vert){ vec2f_sub(p0, vec2f_scl(n1, half_w)) };
+        verts[num_verts++] = (line_vert){ vec2f_add(p0, vec2f_scl(n1, half_w)) };
+
+        for (u32 i = 1; i < lines->num_points - 1; i++) {
+            p0 = lines->points[i - 1];
+            p1 = lines->points[i];
+            p2 = lines->points[i + 1];
+
+            l1 = vec2f_nrm(vec2f_sub(p1, p0));
+            n1 = vec2f_prp(l1);
+            l2 = vec2f_nrm(vec2f_sub(p2, p1));
+            n2 = vec2f_prp(l2);
+
+            // Avoiding issues with infinite miter projection
+            vec2f line_sum = vec2f_add(l1, l2);
+            vec2f tangent, miter;
+            f32 miter_scale;
+            if (vec2f_sqr_len(line_sum) < TANGENT_EPSILON) {
+                tangent = l1;
+                miter = n1;
+                miter_scale = 1.0f;
+            } else {
+                tangent = vec2f_nrm(vec2f_add(l1, l2));
+                miter = vec2f_prp(tangent);
+                miter_scale = 1.0f / vec2f_dot(miter, n1);
+            }
+
+            f32 line_cross = vec2f_crs(vec2f_sub(p1, p0), vec2f_sub(p2, p1));
+            // Some corner operations depend on which side of the points p1 is on
+            f32 s = -SIGN(line_cross);
+
+            if (miter_scale < LINE_MITER_LIMIT && vec2f_sqr_len(line_sum) > TANGENT_EPSILON) {
+                verts[num_verts++] = (line_vert){ vec2f_sub(p1, vec2f_scl(miter, half_w * miter_scale)) };
+                verts[num_verts++] = (line_vert){ vec2f_add(p1, vec2f_scl(miter, half_w * miter_scale)) };
+            } else {
+                corners[num_corners++] = (line_corner){ 
+                    p0, p1, p2, lines->width
+                };
+
+                // Point in the middle of line 1
+                vec2f l1_p = vec2f_add(
+                    vec2f_sub(p1, vec2f_scl(miter, s * half_w * miter_scale)),
+                    vec2f_scl(n1, s * half_w)
+                );
+                // Point in the middle of line 2
+                vec2f l2_p = vec2f_add(
+                    vec2f_sub(p1, vec2f_scl(miter, s * half_w * miter_scale)),
+                    vec2f_scl(n2, s * half_w)
+                );
+
+                // Getting parametric values for the line points
+                vec2f l1_vec = vec2f_sub(p1, p0);
+                f32 t1_unclamped = vec2f_dot(vec2f_sub(l1_p, p0), l1_vec) / vec2f_dot(l1_vec, l1_vec);
+                f32 t1 = CLAMP(t1_unclamped, 0, 1);
+
+                vec2f l2_vec = vec2f_sub(p1, p2);
+                f32 t2_unclamped = vec2f_dot(vec2f_sub(l2_p, p2), l2_vec) / vec2f_dot(l2_vec, l2_vec);
+                f32 t2 = CLAMP(t2_unclamped, 0, 1);
+
+                l1_p = vec2f_add(vec2f_scl(l1_vec, t1), p0);
+                l2_p = vec2f_add(vec2f_scl(l2_vec, t2), p2);
+
+                if (s == 1.0f) {
+                    verts[num_verts++] = (line_vert){ vec2f_sub(l1_p, vec2f_scl(n1, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_add(l1_p, vec2f_scl(n1, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_sub(l2_p, vec2f_scl(n2, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_add(l2_p, vec2f_scl(n2, s * half_w)) };
+                } else {
+                    verts[num_verts++] = (line_vert){ vec2f_add(l1_p, vec2f_scl(n1, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_sub(l1_p, vec2f_scl(n1, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_add(l2_p, vec2f_scl(n2, s * half_w)) };
+                    verts[num_verts++] = (line_vert){ vec2f_sub(l2_p, vec2f_scl(n2, s * half_w)) };
+                }
+            }
+        }
+
+        p1 = lines->points[lines->num_points - 2];
+        p2 = lines->points[lines->num_points - 1];
+
+        l2 = vec2f_nrm(vec2f_sub(p2, p1));
+        n2 = vec2f_prp(l2);
+
+        corners[num_corners++] = (line_corner){ p1, p2, p1, lines->width };
+
+        verts[num_verts++] = (line_vert){ vec2f_sub(p2, vec2f_scl(n2, half_w)) };
+        verts[num_verts++] = (line_vert){ vec2f_add(p2, vec2f_scl(n2, half_w)) };
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, lines->vert_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(line_vert) * lines->num_verts, verts);
+    glBindBuffer(GL_ARRAY_BUFFER, lines->corner_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(line_corner) * lines->num_corners, corners);
+
+    mga_scratch_release(scratch);
+}
+draw_lines* draw_lines_from_points(mg_arena* arena, vec2f* points, u32 num_points, f32 line_width) {
+    if (num_points == 0) {
+        fprintf(stderr, "Cannot create lines with zero points\n");
+        return NULL;
+    }
+
+    draw_lines* lines = MGA_PUSH_ZERO_STRUCT(arena, draw_lines);
+
+    lines->color = (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f };
+    lines->width = line_width;
+
+    lines->num_points = num_points;
+    // TODO: bad, but I am just testing now
+    lines->points = points;
+
+    lines->num_indices = (num_points - 1) * 6;
+    if (num_points == 1) {
+        // Two corners will make a circle
+        lines->num_corners = 2;
+    } else {
+        // At least two for end caps
+        lines->num_corners = 2;
+        // At least two for first segment
+        lines->num_verts = 2;
+
+        for (u32 i = 1; i < num_points - 1; i++) {
+            vec2f p0 = points[i - 1];
+            vec2f p1 = points[i];
+            vec2f p2 = points[i + 1];
+
+            if (_is_corner(p0, p1, p2)) {
+                lines->num_corners++;
+                lines->num_verts += 4;
+            } else {
+                lines->num_verts += 2;
+            }
+        }
+
+        // End of last line segment
+        lines->num_verts += 2;
+    }
+
+    // Indices do not change here, so they can be computed beforehand
+    mga_temp scratch = mga_scratch_get(NULL, 0);
+    u32* indices = MGA_PUSH_ZERO_ARRAY(scratch.arena, u32, lines->num_indices);
+
+    if (num_points > 1) {
+        u32 num_indices = 0;
+        u32 num_verts = 2;
+
+        for (u32 i = 1; i < num_points - 1; i++) {
+            vec2f p0 = points[i - 1];
+            vec2f p1 = points[i];
+            vec2f p2 = points[i + 1];
+
+            if (_is_corner(p0, p1, p2)) {
+                num_verts += 4;
+
+                indices[num_indices++] = num_verts - 6;
+                indices[num_indices++] = num_verts - 5;
+                indices[num_indices++] = num_verts - 4;
+
+                indices[num_indices++] = num_verts - 5;
+                indices[num_indices++] = num_verts - 3;
+                indices[num_indices++] = num_verts - 4;
+            } else {
+                num_verts += 2;
+
+                indices[num_indices++] = num_verts - 4;
+                indices[num_indices++] = num_verts - 3;
+                indices[num_indices++] = num_verts - 2;
+
+                indices[num_indices++] = num_verts - 3;
+                indices[num_indices++] = num_verts - 1;
+                indices[num_indices++] = num_verts - 2;
+            }
+        }
+
+        num_verts += 2;
+
+        indices[num_indices++] = num_verts - 4;
+        indices[num_indices++] = num_verts - 3;
+        indices[num_indices++] = num_verts - 2;
+
+        indices[num_indices++] = num_verts - 3;
+        indices[num_indices++] = num_verts - 1;
+        indices[num_indices++] = num_verts - 2;
+    }
+
+    // OpenGL stuff
+
+    glGenVertexArrays(1, &lines->segment_array);
+    glBindVertexArray(lines->segment_array);
+
+    lines->vert_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(line_vert) * lines->num_verts, NULL, GL_DYNAMIC_DRAW);
+    lines->index_buffer = glh_create_buffer(GL_ELEMENT_ARRAY_BUFFER, sizeof(u32) * lines->num_indices, indices, GL_STATIC_DRAW);
+
+    mga_scratch_release(scratch);
+
+    glGenVertexArrays(1, &lines->corner_array);
+    glBindVertexArray(lines->corner_array);
+
+    lines->corner_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(line_corner) * lines->num_corners, NULL, GL_DYNAMIC_DRAW);
+
+    // Computing the initial geometry
+    draw_lines_update(lines, line_width);
+
+    return lines;
+}
+void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders, const gfx_window* win, viewf view) {
+    mat3f view_mat = { 0 };
+    mat3f_from_view(&view_mat, view);
+
+    // Drawing line segments
+    glUseProgram(shaders->line_program);
+    glUniformMatrix3fv(shaders->line_view_mat_loc, 1, GL_FALSE, view_mat.m);
+    glUniform4f(shaders->line_col_loc, 1.0f, 1.0f, 1.0f, 1.0f);
+    glUniform1f(shaders->line_display_width_loc, lines->width * ((f32)win->width) / view.width);
+
+    glBindVertexArray(lines->segment_array);
+    glBindBuffer(GL_ARRAY_BUFFER, lines->vert_buffer);
+
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_vert), (void*)(offsetof(line_vert, pos)));
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, lines->index_buffer);
+    glDrawElements(GL_TRIANGLES, lines->num_indices, GL_UNSIGNED_INT, NULL);
+
+    glDisableVertexAttribArray(0);
+
+    // Drawing corners
+    glUseProgram(shaders->corner_program);
+    glUniformMatrix3fv(shaders->corner_view_mat_loc, 1, GL_FALSE, view_mat.m);
+    glUniform4f(shaders->corner_col_loc, 1.0f, 1.0f, 1.0f, 1.0f);
+    glUniform2f(shaders->corner_screen_loc, win->width, win->height);
+
+    glBindVertexArray(lines->corner_array);
+    glBindBuffer(GL_ARRAY_BUFFER, lines->corner_buffer);
+
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
+    glEnableVertexAttribArray(3);
+
+    glVertexAttribDivisor(0, 1);
+    glVertexAttribDivisor(1, 1);
+    glVertexAttribDivisor(2, 1);
+    glVertexAttribDivisor(3, 1);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p0));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p1));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p2));
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, line_width));
+
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 5, lines->num_corners);
+
+    glVertexAttribDivisor(0, 0);
+    glVertexAttribDivisor(1, 0);
+    glVertexAttribDivisor(2, 0);
+    glVertexAttribDivisor(3, 0);
+
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(3);
+}
+void draw_lines_destroy(draw_lines* lines) {
+    glDeleteVertexArrays(1, &lines->segment_array);
+    glDeleteVertexArrays(1, &lines->corner_array);
+
+    glDeleteBuffers(1, &lines->vert_buffer);
+    glDeleteBuffers(1, &lines->index_buffer);
+    glDeleteBuffers(1, &lines->corner_buffer);
+}
 
 void mga_err(mga_error err) {
     printf("MGA ERROR %d: %s", err.code, err.msg);
@@ -314,63 +689,22 @@ int main(void) {
     gfx_window* win = gfx_win_create(perm_arena, WIDTH, HEIGHT, STR8("Line Render Test"));
 
     u32 basic_program = glh_create_shader(basic_vert, basic_frag);
-    u32 line_seg_program = glh_create_shader(line_seg_vert, line_seg_frag);
-    u32 corner_program = glh_create_shader(corner_vert, corner_frag);
 
     glUseProgram(basic_program);
     u32 basic_view_mat_loc = glGetUniformLocation(basic_program, "u_view_mat");
     u32 basic_col_loc = glGetUniformLocation(basic_program, "u_col");
 
-    glUseProgram(line_seg_program);
-    u32 line_seg_view_mat_loc = glGetUniformLocation(line_seg_program, "u_view_mat");
-    u32 line_seg_display_width_loc = glGetUniformLocation(line_seg_program, "u_display_width");
+    draw_lines_shaders* shaders = draw_lines_shaders_create(perm_arena);
 
-    glUseProgram(corner_program);
-    u32 corner_view_mat_loc = glGetUniformLocation(corner_program, "u_view_mat");
-    u32 corner_screen_loc = glGetUniformLocation(corner_program, "u_screen");
-    u32 corner_col_loc = glGetUniformLocation(corner_program, "u_col");
+    vec2f points[] = {
+        { -250.0f,  250.0f },
+        { -125.0f, -250.0f },
+        {    0.0f,  250.0f },
+        {  125.0f, -250.0f },
+        {  250.0f,  250.0f },
+    };
 
-    u32 max_line_points = 2 << 11;
-    u32 max_line_verts = (max_line_points - 1) * 4;
-    u32 num_line_verts = 0;
-    u32 max_line_indices = (max_line_points - 1) * 6;
-    u32 num_line_indices = 0;
-    u32 max_corner_instances = 2 << 10;
-    u32 num_corner_instances = 0;
-
-    f32 line_width = 20.0f;
-
-    line_vert* line_verts = MGA_PUSH_ZERO_ARRAY(perm_arena, line_vert, max_line_verts);
-    u32* line_indices = MGA_PUSH_ZERO_ARRAY(perm_arena, u32, max_line_indices);
-    line_corner* corners = MGA_PUSH_ZERO_ARRAY(perm_arena, line_corner, max_corner_instances);
-
-    line_indices[num_line_indices++] = 0;
-    line_indices[num_line_indices++] = 1;
-    line_indices[num_line_indices++] = 2;
-
-    line_indices[num_line_indices++] = 1;
-    line_indices[num_line_indices++] = 3;
-    line_indices[num_line_indices++] = 2;
-
-    line_indices[num_line_indices++] = 4;
-    line_indices[num_line_indices++] = 5;
-    line_indices[num_line_indices++] = 6;
-
-    line_indices[num_line_indices++] = 5;
-    line_indices[num_line_indices++] = 7;
-    line_indices[num_line_indices++] = 6;
-
-    u32 line_vert_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(line_vert) * max_line_verts, line_verts, GL_DYNAMIC_DRAW);
-    u32 line_index_buffer = glh_create_buffer(GL_ELEMENT_ARRAY_BUFFER, sizeof(u32) * max_line_indices, line_indices, GL_DYNAMIC_DRAW);
-    u32 corner_instance_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(line_corner) * max_corner_instances, corners, GL_DYNAMIC_DRAW);
-
-    u32 line_vert_array = 0;
-    glGenVertexArrays(1, &line_vert_array);
-    glBindVertexArray(line_vert_array);
-
-    u32 corner_vert_array = 0;
-    glGenVertexArrays(1, &corner_vert_array);
-    glBindVertexArray(corner_vert_array);
+    draw_lines* lines = draw_lines_from_points(perm_arena, points, sizeof(points) / sizeof(points[0]), 20.0f);
 
     vec2f rect_verts[] = {
         { -250.0f,  250.0f },
@@ -397,7 +731,8 @@ int main(void) {
 
     viewf view = {
         .center = { 0, 0 },
-        .size = { 1280, 720 },
+        .aspect_ratio = (f32)win->width / win->height,
+        .width = win->width,
         .rotation = 0.0f
     };
     mat3f view_mat = { 0 };
@@ -422,7 +757,8 @@ int main(void) {
 
         f32 move_speed = 2.0f;
 
-        view.size = vec2f_scl(view.size, 1.0f + (-0.03f * win->mouse_scroll));
+        view.aspect_ratio = (f32)win->width / win->height;
+        view.width *= 1.0f + (-0.03f * win->mouse_scroll);
 
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_W)) {
             view.center.y -= move_speed;
@@ -437,11 +773,11 @@ int main(void) {
             view.center.x += move_speed;
         }
 
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_UP)) {
-            line_width += 0.1f;
+        if (GFX_IS_KEY_DOWN(win, GFX_KEY_Q)) {
+            view.rotation += 0.01f;
         }
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_DOWN)) {
-            line_width -= 0.1f;
+        if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
+            view.rotation -= 0.01f;
         }
 
         mat3f_from_view(&view_mat, view);
@@ -459,220 +795,44 @@ int main(void) {
         }
         prev_mouse_pos = mouse_pos;
 
-        vec2f p0 = (vec2f){ -75.0f, -100.0f };
-        vec2f p1 = mouse_pos;
-        vec2f p2 = (vec2f){  75.0f, -100.0f };
-
-        vec2f l1 = vec2f_nrm(vec2f_sub(p1, p0));
-        vec2f n1 = vec2f_prp(l1);
-        vec2f l2 = vec2f_nrm(vec2f_sub(p2, p1));
-        vec2f n2 = vec2f_prp(l2);
-
-        // Avoiding issues with infinite miter projection
-        vec2f line_sum = vec2f_add(l1, l2);
-        vec2f tangent;
-        vec2f miter;
-        f32 miter_scale;
-        if (vec2f_sqr_len(line_sum) < TANGENT_EPSILON) {
-            tangent = l1;
-            miter = n1;
-            miter_scale = 1.0f;
-        } else {
-            tangent = vec2f_nrm(vec2f_add(l1, l2));
-            miter = vec2f_prp(tangent);
-            miter_scale = 1.0f / vec2f_dot(miter, n1);
-        }
-
-        f32 w = line_width * 0.5f;
-        f32 line_cross = vec2f_crs(vec2f_sub(p1, p0), vec2f_sub(p2, p1));
-        f32 s = -SIGN(line_cross);
-
-        num_line_verts = 8;
-
-        line_verts[0] = (line_vert){ vec2f_sub(p0, vec2f_scl(n1, w)) };
-        line_verts[1] = (line_vert){ vec2f_add(p0, vec2f_scl(n1, w)) };
-        line_verts[6] = (line_vert){ vec2f_sub(p2, vec2f_scl(n2, w)) };
-        line_verts[7] = (line_vert){ vec2f_add(p2, vec2f_scl(n2, w)) };
-
-        if (miter_scale < 1.5f && vec2f_sqr_len(line_sum) > TANGENT_EPSILON) {
-            num_corner_instances = 0;
-
-            line_verts[2] = (line_vert){ vec2f_sub(p1, vec2f_scl(miter, w * miter_scale)) };
-            line_verts[3] = (line_vert){ vec2f_add(p1, vec2f_scl(miter, w * miter_scale)) };
-            line_verts[4] = (line_vert){ vec2f_sub(p1, vec2f_scl(miter, w * miter_scale)) };
-            line_verts[5] = (line_vert){ vec2f_add(p1, vec2f_scl(miter, w * miter_scale)) };
-        } else {
-            num_corner_instances = 1;
-            corners[0] = (line_corner){
-                p0, p1, p2, line_width
-            };
-
-            // https://www.desmos.com/calculator/13mmrhg5qv
-
-            // Point in the middle of line 1
-            vec2f l1_p = vec2f_add(
-                vec2f_sub(p1, vec2f_scl(miter, s * w * miter_scale)),
-                vec2f_scl(n1, s * w)
-            );
-            // Point in the middle of line 2
-            vec2f l2_p = vec2f_add(
-                vec2f_sub(p1, vec2f_scl(miter, s * w * miter_scale)),
-                vec2f_scl(n2, s * w)
-            );
-
-            // Getting parametric values for the line points
-            vec2f l1_vec = vec2f_sub(p1, p0);
-            f32 t1_unclamped = vec2f_dot(vec2f_sub(l1_p, p0), l1_vec) / vec2f_dot(l1_vec, l1_vec);
-            f32 t1 = CLAMP(t1_unclamped, 0, 1);
-
-            vec2f l2_vec = vec2f_sub(p1, p2);
-            f32 t2_unclamped = vec2f_dot(vec2f_sub(l2_p, p2), l2_vec) / vec2f_dot(l2_vec, l2_vec);
-            f32 t2 = CLAMP(t2_unclamped, 0, 1);
-
-            l1_p = vec2f_add(vec2f_scl(l1_vec, t1), p0);
-            l2_p = vec2f_add(vec2f_scl(l2_vec, t2), p2);
-
-
-    #if 0
-            // Points for calculating corner cap vertices
-            vec2f i1 = vec2f_add(p1, vec2f_scl(miter, s * w));
-            vec2f i2 = vec2f_sub(i1, tangent);
-            vec2f i3 = vec2f_add(vec2f_sub(p1, vec2f_scl(miter, s * w * miter_scale)), vec2f_scl(n1, s * line_width));
-            vec2f i4 = vec2f_add(i3, l1);
-
-            vec2f n_l1 = vec2f_scl(l1, -1.0f);
-
-            vec2f c1 = vec2f_scl(
-                vec2f_sub(
-                    vec2f_scl(n_l1, vec2f_crs(i1, i2)),
-                    vec2f_scl(tangent, vec2f_crs(i3, i4))),
-                1.0f / vec2f_crs(tangent, n_l1)
-            );
-            vec2f c2 = vec2f_add(c1, vec2f_scl(vec2f_sub(i1, c1), 2.0f));
-
-            num_corner_verts = 5;
-            corner_verts[0] = vec2f_add(l1_p, vec2f_scl(n1, s * w));
-            corner_verts[1] = c1;
-            corner_verts[2] = t1_unclamped > t2_unclamped ?
-                vec2f_sub(l1_p, vec2f_scl(n1, s * w)) : vec2f_sub(l2_p, vec2f_scl(n2, s * w));
-            corner_verts[3] = c2;
-            corner_verts[4] = vec2f_add(l2_p, vec2f_scl(n2, s * w));
-    #endif
-
-            if (s == -1.0f) {
-                line_verts[2] = (line_vert){ vec2f_add(l1_p, vec2f_scl(n1, s * w)) };
-                line_verts[3] = (line_vert){ vec2f_sub(l1_p, vec2f_scl(n1, s * w)) };
-                line_verts[4] = (line_vert){ vec2f_add(l2_p, vec2f_scl(n2, s * w)) };
-                line_verts[5] = (line_vert){ vec2f_sub(l2_p, vec2f_scl(n2, s * w)) };
-            } else {
-                line_verts[2] = (line_vert){ vec2f_sub(l1_p, vec2f_scl(n1, s * w)) };
-                line_verts[3] = (line_vert){ vec2f_add(l1_p, vec2f_scl(n1, s * w)) };
-                line_verts[4] = (line_vert){ vec2f_sub(l2_p, vec2f_scl(n2, s * w)) };
-                line_verts[5] = (line_vert){ vec2f_add(l2_p, vec2f_scl(n2, s * w)) };
-            }
-        }
-
-        glBindBuffer(GL_ARRAY_BUFFER, line_vert_buffer);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(line_vert) * num_line_verts, line_verts);
-        glBindBuffer(GL_ARRAY_BUFFER, corner_instance_buffer);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(line_corner) * num_corner_instances, corners);
-
         gfx_win_clear(win);
 
         // Draw
 
         // Rect draw
-        glUseProgram(basic_program);
-        glUniformMatrix3fv(basic_view_mat_loc, 1, GL_FALSE, view_mat.m);
+        {
+            glUseProgram(basic_program);
+            glUniformMatrix3fv(basic_view_mat_loc, 1, GL_FALSE, view_mat.m);
 
-        glUniform4f(basic_col_loc, 0.0f, 0.0f, 0.0f, 1.0f);
+            glUniform4f(basic_col_loc, 0.0f, 0.0f, 0.0f, 1.0f);
 
-        glBindVertexArray(vertex_array);
-        glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+            glBindVertexArray(vertex_array);
+            glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
 
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vec2f), NULL);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vec2f), NULL);
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
 
-        glDisableVertexAttribArray(0);
+            glDisableVertexAttribArray(0);
+        }
 
-        // Corner draw
-        glUseProgram(corner_program);
-        glUniformMatrix3fv(corner_view_mat_loc, 1, GL_FALSE, view_mat.m);
-        glUniform4f(corner_col_loc, 1.0f, 1.0f, 1.0f, 1.0f);
-        glUniform2f(corner_screen_loc, win->width, win->height);
-
-        glBindVertexArray(corner_vert_array);
-        glBindBuffer(GL_ARRAY_BUFFER, corner_instance_buffer);
-
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-        glEnableVertexAttribArray(2);
-        glEnableVertexAttribArray(3);
-
-        glVertexAttribDivisor(0, 1);
-        glVertexAttribDivisor(1, 1);
-        glVertexAttribDivisor(2, 1);
-        glVertexAttribDivisor(3, 1);
-
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p0));
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p1));
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p2));
-        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, line_width));
-
-        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 5, num_corner_instances);
-
-        glVertexAttribDivisor(0, 0);
-        glVertexAttribDivisor(1, 0);
-        glVertexAttribDivisor(2, 0);
-        glVertexAttribDivisor(3, 0);
-
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-        glDisableVertexAttribArray(3);
-
-        // Lines draw
-        glUseProgram(line_seg_program);
-        glUniformMatrix3fv(line_seg_view_mat_loc, 1, GL_FALSE, view_mat.m);
-
-        // As far as I can tell, this is okay because
-        // the view size should always be proportional to the screen size
-        glUniform1f(line_seg_display_width_loc, line_width * ((f32)win->width) / view.size.x);
-
-        glBindVertexArray(line_vert_array);
-        glBindBuffer(GL_ARRAY_BUFFER, line_vert_buffer);
-
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_vert), (void*)(offsetof(line_vert, pos)));
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, line_index_buffer);
-        glDrawElements(GL_TRIANGLES, num_line_indices, GL_UNSIGNED_INT, NULL);
-
-        glDisableVertexAttribArray(0);
+        draw_lines_draw(lines, shaders, win, view);
 
         gfx_win_swap_buffers(win);
 
         os_sleep_ms(8);
     }
 
-    glDeleteBuffers(1, &corner_instance_buffer);
-    glDeleteBuffers(1, &line_vert_buffer);
-    glDeleteBuffers(1, &line_index_buffer);
-    glDeleteVertexArrays(1, &corner_vert_array);
-    glDeleteVertexArrays(1, &line_vert_array);
+    draw_lines_shaders_destroy(shaders);
+    draw_lines_destroy(lines);
 
     glDeleteBuffers(1, &vertex_buffer);
     glDeleteBuffers(1, &index_buffer);
     glDeleteVertexArrays(1, &vertex_array);
 
     glDeleteProgram(basic_program);
-    glDeleteProgram(line_seg_program);
-    glDeleteProgram(corner_program);
 
     gfx_win_destroy(win);
 

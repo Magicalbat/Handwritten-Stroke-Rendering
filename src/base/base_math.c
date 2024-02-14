@@ -55,9 +55,11 @@ void mat3f_transform(mat3f* mat, vec2f scale, vec2f offset, f32 rotation) {
     mat->m[8] = 1.0f;
 }
 void mat3f_from_view(mat3f* mat, viewf v) {
+    vec2f size = vec2f_scl((vec2f){ 1.0f, 1.0f / v.aspect_ratio }, v.width);
+
     vec2f scale = {
-         2.0f / v.size.x,
-        -2.0f / v.size.y,
+         2.0f / size.x,
+        -2.0f / size.y,
     };
 
     f32 r_sin = sinf(v.rotation);

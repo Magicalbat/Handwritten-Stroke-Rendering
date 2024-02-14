@@ -15,7 +15,8 @@ typedef struct { f32 m[16]; } mat4f;
 
 typedef struct {
     vec2f center;
-    vec2f size;
+    f32 aspect_ratio;
+    f32 width;
     f32 rotation;
 } viewf;
 
