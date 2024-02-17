@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -259,7 +260,6 @@ typedef struct {
     f32 line_width;
 } line_corner;
 
-/*
 // Right now, this value is arbitrary
 #define LINE_POINT_BUCKET_SIZE 64
 
@@ -268,9 +268,66 @@ typedef struct line_point_bucket {
     vec2f points[LINE_POINT_BUCKET_SIZE];
     struct line_point_bucket* next;
 } line_point_bucket;
-*/
 
-// TODO: make free list allocator
+typedef struct {
+    b32 owned_arena;
+    mg_arena* backing_arena;
+
+    // Free list
+    line_point_bucket* free_first;
+    line_point_bucket* free_last;
+} line_point_allocator;
+
+// backing_arena can be NULL
+line_point_allocator* line_point_alloc_create(mg_arena* backing_arena) {
+    mg_arena* arena = backing_arena;
+
+    b32 owned_arena = false;
+
+    if (arena == NULL) {
+        owned_arena = true;
+
+        mga_desc desc = {
+            // This should allow for a little over 2 million points
+            .desired_max_size = MGA_MiB(16),
+            .desired_block_size = MGA_MiB(1),
+        };
+        arena = mga_create(&desc);
+    }
+
+    line_point_allocator* point_alloc = MGA_PUSH_ZERO_STRUCT(arena, line_point_allocator);
+
+    point_alloc->owned_arena = owned_arena;
+    point_alloc->backing_arena = arena;
+
+    return point_alloc;
+}
+void line_point_alloc_destroy(line_point_allocator* point_alloc) {
+    if (point_alloc->owned_arena) {
+        mga_destroy(point_alloc->backing_arena);
+    }
+}
+
+line_point_bucket* line_point_alloc_alloc(line_point_allocator* point_alloc) {
+    // Free node in list exists
+    if (point_alloc->free_first != NULL) {
+        line_point_bucket* out = point_alloc->free_first;
+
+        SLL_POP_FRONT(point_alloc->free_first, point_alloc->free_last);
+
+        // This should work because the array is a part of the struct, not a pointer
+        memset(out, 0, sizeof(line_point_bucket) * LINE_POINT_BUCKET_SIZE);
+
+        return out;
+    }
+
+    line_point_bucket* out = MGA_PUSH_ZERO_STRUCT(point_alloc->backing_arena, line_point_bucket);
+
+    return out;
+}
+void line_point_alloc_free(line_point_allocator* point_alloc, line_point_bucket* bucket) {
+    SLL_PUSH_FRONT(point_alloc->free_first, point_alloc->free_last, bucket);
+}
 
 typedef struct {
     u32 line_program;
@@ -696,15 +753,27 @@ int main(void) {
 
     draw_lines_shaders* shaders = draw_lines_shaders_create(perm_arena);
 
-    vec2f points[] = {
-        { -250.0f,  250.0f },
-        { -125.0f, -250.0f },
-        {    0.0f,  250.0f },
-        {  125.0f, -250.0f },
-        {  250.0f,  250.0f },
-    };
+    u32 w = 500;
+    u32 h = 400;
+    vec2f* points = MGA_PUSH_ZERO_ARRAY(perm_arena, vec2f, w * h);
 
-    draw_lines* lines = draw_lines_from_points(perm_arena, points, sizeof(points) / sizeof(points[0]), 20.0f);
+    srand(time(NULL));
+
+    for (u32 y = 0; y < h; y++) {
+        for (u32 x = 0; x < w; x++) {
+            f32 v_y = -500.0f + ((f32)y / h) * 1000.0f;
+            //v_y += ((f32)rand() / (f32)RAND_MAX) * 3.0f - 1.5f;
+            v_y += (x % 2) * 4.0f - 2.0f;
+            f32 v_x = -500.0f + ((f32)x / w) * 1000.0f;
+            if ((y % 2) == 1) {
+                v_x = -v_x;
+            }
+
+            points[x + y * w] = (vec2f){ v_x, v_y };
+        }
+    }
+
+    draw_lines* lines = draw_lines_from_points(perm_arena, points, w * h, 0.5f);
 
     vec2f rect_verts[] = {
         { -250.0f,  250.0f },
@@ -745,11 +814,11 @@ int main(void) {
 
     os_time_init();
 
-    u64 prev_frame = os_now_usec();
+    //u64 prev_frame = os_now_usec();
     while (!win->should_close) {
-        u64 cur_frame = os_now_usec();
-        f32 delta = (f32)(cur_frame - prev_frame) / 1e6;
-        prev_frame = cur_frame;
+        //u64 cur_frame = os_now_usec();
+        //f32 delta = (f32)(cur_frame - prev_frame) / 1e6;
+        //prev_frame = cur_frame;
 
         gfx_win_process_events(win);
 
@@ -778,6 +847,13 @@ int main(void) {
         }
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
             view.rotation -= 0.01f;
+        }
+
+        if (GFX_IS_KEY_DOWN(win, GFX_KEY_UP)) {
+            draw_lines_update(lines, lines->width + 0.1f);
+        }
+        if (GFX_IS_KEY_DOWN(win, GFX_KEY_DOWN)) {
+            draw_lines_update(lines, lines->width - 0.1f);
         }
 
         mat3f_from_view(&view_mat, view);
