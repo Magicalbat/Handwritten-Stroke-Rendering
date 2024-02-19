@@ -373,9 +373,12 @@ typedef struct {
     vec4f color;
     f32 width;
 
+    line_point_allocator* allocator;
+
     // Number of total points
     u32 num_points;
-    vec2f* points;
+    line_point_bucket* points_first;
+    line_point_bucket* points_last;
 
     u32 num_verts;
     u32 num_indices;
@@ -431,17 +434,19 @@ void draw_lines_update(draw_lines* lines, f32 line_width) {
     u32 num_corners = 0;
 
     if (lines->num_points == 1) {
+        vec2f point = lines->points_first->points[0];
+
         // Two corners form a circle here
         corners[num_corners++] = (line_corner){
-            vec2f_add(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
-            lines->points[0],
-            vec2f_add(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            vec2f_add(point, (vec2f){ line_width * 1.1f, 0.0f }),
+            point,
+            vec2f_add(point, (vec2f){ line_width * 1.1f, 0.0f }),
             lines->width
         };
         corners[num_corners++] = (line_corner){
-            vec2f_sub(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
-            lines->points[0],
-            vec2f_sub(lines->points[0], (vec2f){ line_width * 1.1f, 0.0f }),
+            vec2f_sub(point, (vec2f){ line_width * 1.1f, 0.0f }),
+            point,
+            vec2f_sub(point, (vec2f){ line_width * 1.1f, 0.0f }),
             lines->width
         };
     } else {
@@ -451,9 +456,12 @@ void draw_lines_update(draw_lines* lines, f32 line_width) {
         vec2f l1, n1, l2, n2;
 
         f32 half_w = lines->width * 0.5f;
-        
-        p0 = lines->points[0];
-        p1 = lines->points[1];
+
+        line_point_bucket* cur_bucket = lines->points_first;
+        u32 cur_num_buckets = 0;
+
+        p0 = cur_bucket->points[0];
+        p1 = cur_bucket->points[1];
 
         l1 = vec2f_nrm(vec2f_sub(p1, p0));
         n1 = vec2f_prp(l1);
@@ -464,10 +472,25 @@ void draw_lines_update(draw_lines* lines, f32 line_width) {
         verts[num_verts++] = (line_vert){ vec2f_sub(p0, vec2f_scl(n1, half_w)) };
         verts[num_verts++] = (line_vert){ vec2f_add(p0, vec2f_scl(n1, half_w)) };
 
+        // This is to get the correct p0 and p1 values in the first iteration of the for loop
+        p1 = cur_bucket->points[0];
+        p2 = cur_bucket->points[1];
         for (u32 i = 1; i < lines->num_points - 1; i++) {
-            p0 = lines->points[i - 1];
-            p1 = lines->points[i];
-            p2 = lines->points[i + 1];
+            p0 = p1;
+            p1 = p2;
+
+            if (i + 1 >= (cur_num_buckets + 1) * LINE_POINT_BUCKET_SIZE) {
+                if (cur_bucket->next == NULL) {
+                    fprintf(stderr, "Cannot update lines, not enough point buckets\n");
+
+                    // So that scratch arena gets released
+                    goto end;
+                }
+
+                cur_bucket = cur_bucket->next;
+                cur_num_buckets++;
+            }
+            p2 = cur_bucket->points[i + 1 - cur_num_buckets * LINE_POINT_BUCKET_SIZE];
 
             l1 = vec2f_nrm(vec2f_sub(p1, p0));
             n1 = vec2f_prp(l1);
@@ -536,10 +559,6 @@ void draw_lines_update(draw_lines* lines, f32 line_width) {
                 }
             }
         }
-
-        p1 = lines->points[lines->num_points - 2];
-        p2 = lines->points[lines->num_points - 1];
-
         l2 = vec2f_nrm(vec2f_sub(p2, p1));
         n2 = vec2f_prp(l2);
 
@@ -554,9 +573,11 @@ void draw_lines_update(draw_lines* lines, f32 line_width) {
     glBindBuffer(GL_ARRAY_BUFFER, lines->corner_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(line_corner) * lines->num_corners, corners);
 
+end: 
+
     mga_scratch_release(scratch);
 }
-draw_lines* draw_lines_from_points(mg_arena* arena, vec2f* points, u32 num_points, f32 line_width) {
+draw_lines* draw_lines_from_points(mg_arena* arena, line_point_allocator* allocator, vec2f* points, u32 num_points, f32 line_width) {
     if (num_points == 0) {
         fprintf(stderr, "Cannot create lines with zero points\n");
         return NULL;
@@ -567,9 +588,21 @@ draw_lines* draw_lines_from_points(mg_arena* arena, vec2f* points, u32 num_point
     lines->color = (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f };
     lines->width = line_width;
 
+    lines->allocator = allocator;
+
     lines->num_points = num_points;
-    // TODO: bad, but I am just testing now
-    lines->points = points;
+    u32 num_buckets = (num_points + LINE_POINT_BUCKET_SIZE - 1) / LINE_POINT_BUCKET_SIZE;
+    for (u32 i = 0; i < num_buckets; i++) {
+        line_point_bucket* bucket = line_point_alloc_alloc(allocator);
+
+        u32 size = i == num_buckets - 1 ? 
+            num_points - (LINE_POINT_BUCKET_SIZE * (num_buckets - 1)) : LINE_POINT_BUCKET_SIZE;
+
+        bucket->size = size;
+        memcpy(bucket->points, points + i * LINE_POINT_BUCKET_SIZE, sizeof(vec2f) * size);
+
+        SLL_PUSH_BACK(lines->points_first, lines->points_last, bucket);
+    }
 
     lines->num_indices = (num_points - 1) * 6;
     if (num_points == 1) {
@@ -646,7 +679,6 @@ draw_lines* draw_lines_from_points(mg_arena* arena, vec2f* points, u32 num_point
     }
 
     // OpenGL stuff
-
     glGenVertexArrays(1, &lines->segment_array);
     glBindVertexArray(lines->segment_array);
 
@@ -752,6 +784,7 @@ int main(void) {
     u32 basic_col_loc = glGetUniformLocation(basic_program, "u_col");
 
     draw_lines_shaders* shaders = draw_lines_shaders_create(perm_arena);
+    line_point_allocator* point_allocator = line_point_alloc_create(perm_arena);
 
     u32 w = 500;
     u32 h = 400;
@@ -773,7 +806,7 @@ int main(void) {
         }
     }
 
-    draw_lines* lines = draw_lines_from_points(perm_arena, points, w * h, 0.5f);
+    draw_lines* lines = draw_lines_from_points(perm_arena, point_allocator, points, w * h, 1.0f);
 
     vec2f rect_verts[] = {
         { -250.0f,  250.0f },
@@ -814,39 +847,39 @@ int main(void) {
 
     os_time_init();
 
-    //u64 prev_frame = os_now_usec();
+    u64 prev_frame = os_now_usec();
     while (!win->should_close) {
-        //u64 cur_frame = os_now_usec();
-        //f32 delta = (f32)(cur_frame - prev_frame) / 1e6;
-        //prev_frame = cur_frame;
+        u64 cur_frame = os_now_usec();
+        f32 delta = (f32)(cur_frame - prev_frame) / 1e6;
+        prev_frame = cur_frame;
 
         gfx_win_process_events(win);
 
         // Update
 
-        f32 move_speed = 2.0f;
+        f32 move_speed = view.width;
 
         view.aspect_ratio = (f32)win->width / win->height;
-        view.width *= 1.0f + (-0.03f * win->mouse_scroll);
+        view.width *= 1.0f + (-10.0f * win->mouse_scroll * delta);
 
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_W)) {
-            view.center.y -= move_speed;
+            view.center.y -= move_speed * delta;
         }
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_S)) {
-            view.center.y += move_speed;
+            view.center.y += move_speed * delta;
         }
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_A)) {
-            view.center.x -= move_speed;
+            view.center.x -= move_speed * delta;
         }
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_D)) {
-            view.center.x += move_speed;
+            view.center.x += move_speed * delta;
         }
 
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_Q)) {
-            view.rotation += 0.01f;
+            view.rotation += 3.1415926535f * delta;
         }
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
-            view.rotation -= 0.01f;
+            view.rotation -= 3.1415926535f * delta;
         }
 
         if (GFX_IS_KEY_DOWN(win, GFX_KEY_UP)) {
@@ -898,10 +931,11 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        os_sleep_ms(8);
+        //os_sleep_ms(8);
     }
 
     draw_lines_shaders_destroy(shaders);
+    line_point_alloc_destroy(point_allocator);
     draw_lines_destroy(lines);
 
     glDeleteBuffers(1, &vertex_buffer);
