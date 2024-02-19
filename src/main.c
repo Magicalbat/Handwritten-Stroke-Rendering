@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "base/base.h"
+#include "os/os.h"
 #include "gfx/gfx.h"
 #include "gfx/opengl/opengl.h"
 #include "gfx/opengl/opengl_helpers.h"
@@ -206,45 +207,6 @@ static const char* corner_frag = GLSL_SOURCE(
         out_col = vec4(u_col.xyz, u_col.w * alpha);
     }
 );
-
-#if defined(PLATFORM_LINUX)
-
-void os_time_init(void) { }
-u64 os_now_usec(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (u64)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-}
-void os_sleep_ms(u64 ms) {
-    usleep(ms * 1000);
-}
-
-#elif defined(PLATFORM_WIN32)
-
-static u64 w32_ticks_per_sec = 1;
-void os_time_init(void) {
-    LARGE_INTEGER perf_freq;
-    if (QueryPerformanceFrequency(&perf_freq)) {
-        w32_ticks_per_sec = ((u64)perf_freq.HighPart << 32) | perf_freq.LowPart;
-    } else {
-        fprintf(stderr, "Failed to initialize time: could not get performance frequency\n");
-    }
-}
-u64 os_now_usec(void) {
-    u64 out = 0;
-    LARGE_INTEGER perf_count;
-    if (QueryPerformanceCounter(&perf_count)) {
-        u64 ticks = ((u64)perf_count.HighPart << 32) | perf_count.LowPart;
-        out = ticks * 1000000 / w32_ticks_per_sec;
-    } else {
-        fprintf(stderr, "Failed to retrive time in micro seconds\n");
-    }
-    return out;
-}
-void os_sleep_ms(u64 ms) {
-    Sleep(ms);
-}
-#endif
 
 // Line vertex data
 typedef struct {
