@@ -35,6 +35,9 @@ static_assert(sizeof(f64) == 8, "f64 size");
 #define CONCAT_NX(a, b) a##b
 #define CONCAT(a, b) CONCAT_NX(a, b)
 
+#define STRINGIFY_NX(s) #s
+#define STRINGIFY(s) STRINGIFY_NX(s)
+
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define ABS(n) ((n) < 0 ? -(n) : (n))

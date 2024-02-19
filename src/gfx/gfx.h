@@ -3,8 +3,6 @@
 
 #include "base/base.h"
 
-typedef struct _gfx_win_backend _gfx_win_backend;
-
 #define GFX_NUM_KEYS          256
 #define GFX_NUM_MOUSE_BUTTONS 5
 
@@ -22,7 +20,7 @@ typedef struct {
     b8 keys[GFX_NUM_KEYS];
     b8 prev_keys[GFX_NUM_KEYS];
 
-    _gfx_win_backend* backend;
+    struct _gfx_win_backend* backend;
 } gfx_window;
 
 gfx_window* gfx_win_create(mg_arena* arena, u32 width, u32 height, string8 title);
