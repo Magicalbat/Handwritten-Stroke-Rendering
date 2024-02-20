@@ -44,17 +44,17 @@ static_assert(sizeof(f64) == 8, "f64 size");
 #define SIGN(n) ((n) < 0 ? -1 : 1)
 #define CLAMP(x, a, b) (MIN((b), MAX((x), (a))))
 
-#define SLL_PUSH_FRONT(f, l, n) ((f) == 0 ? \
-    ((f) = (l) = (n)) :                     \
-    ((n)->next = (f), (f) = (n)))           \
+#define SLL_PUSH_FRONT(f, l, n) ((f) == NULL ? \
+    ((f) = (l) = (n)) :                        \
+    ((n)->next = (f), (f) = (n)))              \
 
-#define SLL_PUSH_BACK(f, l, n) ((f) == 0 ? \
-    ((f) = (l) = (n)) :                    \
-    ((l)->next = (n), (l) = (n)),          \
-    ((n)->next = 0))                       \
+#define SLL_PUSH_BACK(f, l, n) ((f) == NULL ? \
+    ((f) = (l) = (n)) :                       \
+    ((l)->next = (n), (l) = (n)),             \
+    ((n)->next = NULL))                       \
 
 #define SLL_POP_FRONT(f, l) ((f) == (l) ? \
-    ((f) = (l) = 0) :                     \
+    ((f) = (l) = NULL) :                  \
     ((f) = (f)->next))                    \
 
 #define DLL_PUSH_BACK(f, l, n) ((f) == 0 ? \

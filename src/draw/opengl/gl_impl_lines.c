@@ -3,6 +3,7 @@
 #ifdef DRAW_BACKEND_OPENGL
 
 #include <stdio.h>
+#include <string.h>
 
 #include "gfx/opengl/opengl.h"
 #include "gfx/opengl/opengl_helpers.h"
@@ -112,6 +113,7 @@ draw_lines* draw_lines_from_points(mg_arena* arena, draw_point_allocator* alloca
     }
 
     draw_lines* lines = MGA_PUSH_ZERO_STRUCT(arena, draw_lines);
+    lines->points = (draw_point_list){ .allocator = allocator };
     lines->backend = MGA_PUSH_ZERO_STRUCT(arena, draw_lines_backend);
 
     lines->color = col;
@@ -119,7 +121,7 @@ draw_lines* draw_lines_from_points(mg_arena* arena, draw_point_allocator* alloca
 
     lines->allocator = allocator;
 
-    lines->num_points = num_points;
+    lines->points.size = num_points;
     u32 num_buckets = (num_points + DRAW_POINT_BUCKET_SIZE - 1) / DRAW_POINT_BUCKET_SIZE;
     for (u32 i = 0; i < num_buckets; i++) {
         draw_point_bucket* bucket = draw_point_alloc_alloc(allocator);
@@ -130,7 +132,7 @@ draw_lines* draw_lines_from_points(mg_arena* arena, draw_point_allocator* alloca
         bucket->size = size;
         memcpy(bucket->points, points + i * DRAW_POINT_BUCKET_SIZE, sizeof(vec2f) * size);
 
-        SLL_PUSH_BACK(lines->points_first, lines->points_last, bucket);
+        SLL_PUSH_BACK(lines->points.first, lines->points.last, bucket);
     }
 
     lines->num_indices = (num_points - 1) * 6;
@@ -234,6 +236,8 @@ void draw_lines_destroy(draw_lines* lines) {
         return;
     }
 
+    draw_point_list_destroy(&lines->points);
+
     glDeleteVertexArrays(1, &lines->backend->segment_array);
     glDeleteVertexArrays(1, &lines->backend->corner_array);
 
@@ -310,7 +314,7 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width) {
-    if (lines == NULL || lines->num_points == 0) {
+    if (lines == NULL || lines->points.size == 0) {
         fprintf(stderr, "Cannot update lines: invalid lines object\n");
         return;
     }
@@ -326,8 +330,8 @@ void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width) {
     u32 num_verts = 0;
     u32 num_corners = 0;
 
-    if (lines->num_points == 1) {
-        vec2f point = lines->points_first->points[0];
+    if (lines->points.size == 1) {
+        vec2f point = lines->points.first->points[0];
 
         // Two corners form a circle here
         corners[num_corners++] = (line_corner){
@@ -348,7 +352,7 @@ void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width) {
 
         f32 half_w = lines->width * 0.5f;
 
-        draw_point_bucket* cur_bucket = lines->points_first;
+        draw_point_bucket* cur_bucket = lines->points.first;
         u32 cur_num_buckets = 0;
 
         p0 = cur_bucket->points[0];
@@ -366,7 +370,7 @@ void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width) {
         // This is to get the correct p0 and p1 values in the first iteration of the for loop
         p1 = cur_bucket->points[0];
         p2 = cur_bucket->points[1];
-        for (u32 i = 1; i < lines->num_points - 1; i++) {
+        for (u32 i = 1; i < lines->points.size - 1; i++) {
             p0 = p1;
             p1 = p2;
 

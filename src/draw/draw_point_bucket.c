@@ -51,3 +51,28 @@ draw_point_bucket* draw_point_alloc_alloc(draw_point_allocator* point_alloc) {
 void draw_point_alloc_free(draw_point_allocator* point_alloc, draw_point_bucket* bucket) {
     SLL_PUSH_FRONT(point_alloc->free_first, point_alloc->free_last, bucket);
 }
+
+void draw_point_list_add(draw_point_list* list, vec2f point) {
+    list->size++;
+
+    if (list->last == NULL || list->last->size == DRAW_POINT_BUCKET_SIZE) {
+        draw_point_bucket* bucket = draw_point_alloc_alloc(list->allocator);
+        bucket->size = 1;
+        bucket->points[0] = point;
+
+        SLL_PUSH_BACK(list->first, list->last, bucket);
+
+        return;
+    }
+
+    list->last->points[list->last->size++] = point;
+}
+void draw_point_list_destroy(draw_point_list* list) {
+    while (list->first != NULL) {
+        draw_point_bucket* bucket = list->first;
+        SLL_POP_FRONT(list->first, list->last);
+
+        draw_point_alloc_free(list->allocator, bucket);
+    }
+}
+

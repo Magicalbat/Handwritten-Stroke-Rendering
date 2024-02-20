@@ -210,12 +210,12 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        //os_sleep_ms(8);
+        os_sleep_ms(8);
     }
 
     draw_lines_shaders_destroy(shaders);
-    draw_point_alloc_destroy(point_allocator);
     draw_lines_destroy(lines);
+    draw_point_alloc_destroy(point_allocator);
 
     glDeleteBuffers(1, &vertex_buffer);
     glDeleteBuffers(1, &index_buffer);

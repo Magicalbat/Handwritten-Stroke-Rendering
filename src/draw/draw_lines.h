@@ -16,11 +16,7 @@ typedef struct {
     f32 width;
 
     draw_point_allocator* allocator;
-
-    // Number of total points
-    u32 num_points;
-    draw_point_bucket* points_first;
-    draw_point_bucket* points_last;
+    draw_point_list points;
 
     u32 num_verts;
     u32 num_indices;
