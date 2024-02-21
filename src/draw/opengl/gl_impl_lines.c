@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "gfx/opengl/opengl.h"
 #include "gfx/opengl/opengl_helpers.h"
@@ -56,7 +57,7 @@ typedef struct {
 
 #define AA_SMOOTHING 3
 #define TANGENT_EPSILON 1e-5
-#define MITER_LIMIT 1.5f
+#define MITER_LIMIT 1.2
 
 static const char* line_seg_vert;
 static const char* line_seg_frag;
@@ -338,6 +339,7 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
     glUseProgram(shaders->corner_program);
     glUniformMatrix3fv(shaders->corner_view_mat_loc, 1, GL_FALSE, view_mat.m);
     glUniform4f(shaders->corner_col_loc, lines->color.x, lines->color.y, lines->color.z, lines->color.w);
+    //glUniform4f(shaders->corner_col_loc, 1, 0, 0, 1);
     glUniform2f(shaders->corner_screen_loc, win->width, win->height);
     glUniform1f(shaders->corner_line_width_loc, lines->width);
 
@@ -536,19 +538,28 @@ end:
 
 void _maybe_resize_buffer(u32 type, u32 elem_size, u32 size, u32* capacity, u32* buffer);
 
-void draw_lines_add_point(draw_lines* lines, vec2f point) {
+void draw_lines_add_point_internal(draw_lines* lines, vec2f point, b32 new) {
     if (lines == NULL) {
         fprintf(stderr, "Cannot add point to NULL lines\n");
         return;
     }
 
-    draw_point_list_add(&lines->points, point);
-
     vec2f* last_points = lines->backend->last_points;
 
-    last_points[0] = last_points[1];
-    last_points[1] = last_points[2];
-    last_points[2] = point;
+    vec2f prev_point = last_points[2];
+
+    if (new && lines->points.size > 3) {
+        last_points[2] = point;
+        lines->points.last->points[lines->points.last->size -1] = point;
+    } else {
+        new = false;
+
+        draw_point_list_add(&lines->points, point);
+
+        last_points[0] = last_points[1];
+        last_points[1] = last_points[2];
+        last_points[2] = point;
+    }
 
     if (lines->points.size == 1) {
         vec2f point = lines->points.first->points[0];
@@ -610,18 +621,28 @@ void draw_lines_add_point(draw_lines* lines, vec2f point) {
             return;
         }
 
-        // Replacing the two more recent verts
-        lines->backend->num_verts -= 2;
-        // Replacing end cap
-        lines->backend->num_corners -= 1;
+
+        if (!new) {
+            // Replacing the two more recent verts
+            lines->backend->num_verts -= 2;
+            // Replacing end cap
+            lines->backend->num_corners -= 1;
+            // Always append the same number of indices
+            lines->backend->num_indices += 6;
+        } else {
+            if (_is_corner(last_points[0], last_points[1], prev_point)) {
+                lines->backend->num_verts -= 6;
+                lines->backend->num_corners -= 2;
+            } else {
+                lines->backend->num_verts -= 4;
+                lines->backend->num_corners -= 1;
+            }
+        }
 
         // Saving these values for the glBufferSubData calls later
         u32 start_verts = lines->backend->num_verts;
-        u32 start_indices = lines->backend->num_indices;
+        u32 start_indices = lines->backend->num_indices - 6;
         u32 start_corners = lines->backend->num_corners;
-
-        // Always append the same number of indices
-        lines->backend->num_indices += 6;
 
         u32* num_verts = &lines->backend->num_verts;
 
@@ -785,6 +806,13 @@ void _maybe_resize_buffer(u32 type, u32 elem_size, u32 size, u32* capacity, u32*
 
         *buffer = new_buffer;
     }
+}
+
+void draw_lines_add_point(draw_lines* lines, vec2f point) {
+    draw_lines_add_point_internal(lines, point, false);
+}
+void draw_lines_change_last(draw_lines* lines, vec2f new_last) {
+    draw_lines_add_point_internal(lines, new_last, true);
 }
 
 #define GLSL_SOURCE(version, shader) "#version " #version " core \n" STRINGIFY(shader)

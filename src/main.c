@@ -119,7 +119,9 @@ int main(void) {
     mat3f_inverse(&inv_view_mat, &view_mat);
 
     gfx_win_process_events(win);
-    vec2f prev_mouse_pos = mat3f_mul_vec2f(&inv_view_mat, win->mouse_pos);
+
+    vec2f prev_mouse_pos = win->mouse_pos;
+    vec2f prev_point = prev_mouse_pos;
 
     os_time_init();
 
@@ -174,9 +176,12 @@ int main(void) {
         };
         mouse_pos = mat3f_mul_vec2f(&inv_view_mat, mouse_pos);
 
-        if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT)) {
-            if (lines->points.size == 0 || vec2f_sqr_dist(mouse_pos, prev_mouse_pos) > 1.0f) {
+        if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
+            if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.01f) {
                 draw_lines_add_point(lines, mouse_pos);
+                prev_point = mouse_pos;
+            } else {
+                draw_lines_change_last(lines, mouse_pos);
             }
         }
         prev_mouse_pos = mouse_pos;
@@ -208,7 +213,7 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        os_sleep_ms(8);
+        os_sleep_ms(16);
     }
 
     draw_lines_shaders_destroy(shaders);

@@ -31,6 +31,7 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
 // Updates the geometry of the lines with the new color and width
 void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width);
 void draw_lines_add_point(draw_lines* lines, vec2f point);
+void draw_lines_change_last(draw_lines* lines, vec2f new_last);
 
 #endif // DRAW_LINES_H
 

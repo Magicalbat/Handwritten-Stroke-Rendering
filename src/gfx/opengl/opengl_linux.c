@@ -174,6 +174,7 @@ gfx_window* gfx_win_create(mg_arena* arena, u32 width, u32 height, string8 title
     return win;
 }
 void gfx_win_destroy(gfx_window* win) {
+    glXMakeCurrent(win->backend->display, 0, 0);
     glXDestroyContext(win->backend->display, win->backend->gl_context);
 
     XDestroyWindow(win->backend->display, win->backend->window);
