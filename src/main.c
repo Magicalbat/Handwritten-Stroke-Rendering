@@ -62,7 +62,7 @@ int main(void) {
     draw_lines_shaders* shaders = draw_lines_shaders_create(perm_arena);
     draw_point_allocator* point_allocator = draw_point_alloc_create(perm_arena);
 
-    u32 w = 500;
+    /*u32 w = 500;
     u32 h = 400;
     vec2f* points = MGA_PUSH_ZERO_ARRAY(perm_arena, vec2f, w * h);
 
@@ -80,12 +80,9 @@ int main(void) {
 
             points[x + y * w] = (vec2f){ v_x, v_y };
         }
-    }
+    }*/
 
-    draw_lines* lines = draw_lines_from_points(
-        perm_arena, point_allocator, points, w * h,
-        (vec4f){ 0, 1, 1, 1 }, 1.0f
-    );
+    draw_lines* lines = draw_lines_create(perm_arena, point_allocator, (vec4f){ 0, 1, 1, 1 }, 10.0f);
 
     vec2f rect_verts[] = {
         { -250.0f,  250.0f },
@@ -178,7 +175,8 @@ int main(void) {
         mouse_pos = mat3f_mul_vec2f(&inv_view_mat, mouse_pos);
 
         if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT)) {
-            if (vec2f_sqr_dist(mouse_pos, prev_mouse_pos) > 2.0f) {
+            if (lines->points.size == 0 || vec2f_sqr_dist(mouse_pos, prev_mouse_pos) > 1.0f) {
+                draw_lines_add_point(lines, mouse_pos);
             }
         }
         prev_mouse_pos = mouse_pos;

@@ -27,6 +27,10 @@ project "Line-Render-Test"
     architecture "x64"
     toolset "clang"
 
+    filter { "action:not vs*", "configurations:debug" }
+    	buildoptions { "-fsanitize=address" }
+    	linkoptions { "-fsanitize=address" }
+
     filter "system:linux"
         links {
             "m", "X11", "GL", "GLX",
