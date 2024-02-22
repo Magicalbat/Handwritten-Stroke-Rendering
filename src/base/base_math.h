@@ -9,6 +9,8 @@ typedef struct { f32 x, y, z, w; } vec4f;
 
 typedef struct { f32 x, y, w, h; } rectf;
 
+typedef struct { vec2f pos; f32 r; } circlef;
+
 typedef struct { f32 m[4];  } mat2f;
 typedef struct { f32 m[9];  } mat3f;
 typedef struct { f32 m[16]; } mat4f;
@@ -19,6 +21,10 @@ typedef struct {
     f32 width;
     f32 rotation;
 } viewf;
+
+b32 vec2f_in_rectf(vec2f point, rectf rect);
+b32 rectf_collide_rectf(rectf a, rectf b);
+b32 rectf_collide_circlf(rectf rect, circlef circle);
 
 vec2f vec2f_add(vec2f a, vec2f b);
 vec2f vec2f_sub(vec2f a, vec2f b);

@@ -15,6 +15,9 @@ typedef struct {
     vec4f color;
     f32 width;
 
+    // This will not always be 100% accurate, but it should always contain the lines
+    rectf bounding_box;
+
     draw_point_allocator* allocator;
     draw_point_list points;
 

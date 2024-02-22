@@ -2,6 +2,46 @@
 #include <math.h>
 #include <stdio.h>
 
+b32 vec2f_in_rectf(vec2f point, rectf rect) {
+    return (
+        point.x >= rect.x &&
+        point.x <= rect.x + rect.w &&
+        point.y >= rect.y &&
+        point.y <= rect.y + rect.h
+    );
+}
+b32 rectf_collide_rectf(rectf a, rectf b) {
+    return (
+        a.x + a.w >= b.x &&
+        a.x <= b.x + b.w &&
+        a.y + a.h >= b.y &&
+        a.y <= b.y + b.h
+    );
+}
+// https://www.jeffreythompson.org/collision-detection/circle-rect.php
+b32 rectf_collide_circlf(rectf rect, circlef circle) {
+    // temporary variables to set edges for testing
+    vec2f test_pos = circle.pos;
+
+    // which edge is closest?
+    if (circle.pos.x < rect.x)
+        test_pos.x = rect.x; // test left edge
+    else if (circle.pos.x > rect.x+rect.w)
+        test_pos.x = rect.x + rect.w; // right edge
+    if (circle.pos.y < rect.y)
+        test_pos.y = rect.y; // top edge
+    else if (circle.pos.y > rect.y+rect.h)
+        test_pos.y = rect.y+rect.h; // bottom edge
+
+    f32 dist = vec2f_dist(circle.pos, test_pos);
+
+    // if the distance is less than the radius, collision!
+    if (dist <= circle.r) {
+        return true;
+    }
+    return false;
+}
+
 vec2f vec2f_add(vec2f a, vec2f b) {
     return (vec2f){ a.x + b.x, a.y + b.y };
 }

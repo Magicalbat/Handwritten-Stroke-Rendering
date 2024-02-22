@@ -127,6 +127,31 @@ draw_lines* draw_lines_from_points(mg_arena* arena, draw_point_allocator* alloca
     lines->points = (draw_point_list){ .allocator = allocator };
     lines->backend = MGA_PUSH_ZERO_STRUCT(arena, draw_lines_backend);
 
+    vec2f min_pos = points[0];
+    vec2f max_pos = points[0];
+
+    for (u32 i = 0; i < num_points; i++) {
+        if (points[i].x > max_pos.x) {
+            max_pos.x = points[i].x;
+        }
+        if (points[i].y > max_pos.y) {
+            max_pos.y = points[i].y;
+        }
+        if (points[i].x < min_pos.x) {
+            min_pos.x = points[i].x;
+        }
+        if (points[i].y < min_pos.y) {
+            min_pos.y = points[i].y;
+        }
+    }
+
+    lines->bounding_box = (rectf){
+        min_pos.x - lines->width,
+        min_pos.y - lines->width,
+        (max_pos.x - min_pos.x) + lines->width * 2.0f,
+        (max_pos.y - min_pos.y) + lines->width * 2.0f
+    };
+
     lines->color = col;
     lines->width = line_width;
 
@@ -544,6 +569,21 @@ void draw_lines_add_point_internal(draw_lines* lines, vec2f point, b32 new) {
         return;
     }
 
+    if (point.x - lines->width < lines->bounding_box.x) {
+        lines->bounding_box.w += lines->bounding_box.x - (point.x - lines->width);
+        lines->bounding_box.x = point.x - lines->width;
+    }
+    if (point.y - lines->width < lines->bounding_box.y) {
+        lines->bounding_box.h += lines->bounding_box.y - (point.y - lines->width);
+        lines->bounding_box.y = point.y - lines->width;
+    }
+    if (point.x + lines->width > lines->bounding_box.x + lines->bounding_box.w) {
+        lines->bounding_box.w += (point.x + lines->width) - (lines->bounding_box.x + lines->bounding_box.w);
+    }
+    if (point.y + lines->width > lines->bounding_box.y + lines->bounding_box.h) {
+        lines->bounding_box.h += (point.y + lines->width) - (lines->bounding_box.y + lines->bounding_box.h);
+    }
+
     vec2f* last_points = lines->backend->last_points;
 
     vec2f prev_point = last_points[2];
@@ -562,6 +602,13 @@ void draw_lines_add_point_internal(draw_lines* lines, vec2f point, b32 new) {
     }
 
     if (lines->points.size == 1) {
+        lines->bounding_box = (rectf) {
+            point.x - lines->width,
+            point.y - lines->width,
+            lines->width * 2.0f,
+            lines->width * 2.0f,
+        };
+
         vec2f point = lines->points.first->points[0];
 
         lines->backend->num_corners = 2;

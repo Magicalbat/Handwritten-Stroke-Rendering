@@ -82,7 +82,8 @@ int main(void) {
         }
     }*/
 
-    draw_lines* lines = draw_lines_create(perm_arena, point_allocator, (vec4f){ 0, 1, 1, 1 }, 10.0f);
+    u32 num_lines = 0;
+    draw_lines* lines[1024] = { 0 };
 
     vec2f rect_verts[] = {
         { -250.0f,  250.0f },
@@ -100,7 +101,7 @@ int main(void) {
     glGenVertexArrays(1, &vertex_array);
     glBindVertexArray(vertex_array);
 
-    u32 vertex_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(rect_verts), rect_verts, GL_STATIC_DRAW);
+    u32 vertex_buffer = glh_create_buffer(GL_ARRAY_BUFFER, sizeof(rect_verts), rect_verts, GL_DYNAMIC_DRAW);
     u32 index_buffer = glh_create_buffer(GL_ELEMENT_ARRAY_BUFFER, sizeof(rect_indices), rect_indices, GL_STATIC_DRAW);
 
     glClearColor(0.2f, 0.2f, 0.4f, 1.0f);
@@ -160,13 +161,6 @@ int main(void) {
             view.rotation -= 3.1415926535f * delta;
         }
 
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_UP)) {
-            draw_lines_update(lines, (vec4f){ 1, 1, 1, 1 }, lines->width + 0.1f);
-        }
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_DOWN)) {
-            draw_lines_update(lines, (vec4f){ 1, 1, 1, 1 }, lines->width - 0.1f);
-        }
-
         mat3f_from_view(&view_mat, view);
         mat3f_inverse(&inv_view_mat, &view_mat);
 
@@ -176,12 +170,18 @@ int main(void) {
         };
         mouse_pos = mat3f_mul_vec2f(&inv_view_mat, mouse_pos);
 
-        if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
-            if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.01f) {
-                draw_lines_add_point(lines, mouse_pos);
-                prev_point = mouse_pos;
-            } else {
-                draw_lines_change_last(lines, mouse_pos);
+        if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
+        } else {
+            if (GFX_IS_MOUSE_JUST_DOWN(win, GFX_MB_LEFT)) {
+                lines[num_lines++] = draw_lines_create(perm_arena, point_allocator, (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f }, 10.0f);
+                draw_lines_add_point(lines[num_lines - 1], mouse_pos);
+            } else if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
+                if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.001f) {
+                    draw_lines_add_point(lines[num_lines - 1], mouse_pos);
+                    prev_point = mouse_pos;
+                } else {
+                    draw_lines_change_last(lines[num_lines - 1], mouse_pos);
+                }
             }
         }
         prev_mouse_pos = mouse_pos;
@@ -200,6 +200,15 @@ int main(void) {
             glBindVertexArray(vertex_array);
             glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
 
+            vec2f rect_verts[] = {
+                { -250.0f,  250.0f },
+                { -250.0f, -250.0f },
+                {  250.0f, -250.0f },
+                {  250.0f,  250.0f }
+            };
+
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(rect_verts), rect_verts);
+
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vec2f), NULL);
 
@@ -209,15 +218,46 @@ int main(void) {
             glDisableVertexAttribArray(0);
         }
 
-        draw_lines_draw(lines, shaders, win, view);
+        for (u32 i = 0; i < num_lines; i++) {
+            draw_lines_draw(lines[i], shaders, win, view);
+        }
+
+
+        glUseProgram(basic_program);
+        glUniform4f(basic_col_loc, 0.0f, 1.0f, 0.0f, 0.25f);
+        for (u32 i = 0; i < num_lines; i++) {
+            glBindVertexArray(vertex_array);
+            glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+
+            rectf bb = lines[i]->bounding_box;
+            vec2f verts[] = {
+                { bb.x, bb.y + bb.h },
+                { bb.x, bb.y },
+                { bb.x + bb.w, bb.y },
+                { bb.x + bb.w, bb.y + bb.h },
+            };
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vec2f), NULL);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
+
+            glDisableVertexAttribArray(0);
+
+        }
 
         gfx_win_swap_buffers(win);
 
         os_sleep_ms(16);
     }
 
+    for (u32 i = 0; i < num_lines; i++) {
+        draw_lines_destroy(lines[i]);
+    }
+
     draw_lines_shaders_destroy(shaders);
-    draw_lines_destroy(lines);
     draw_point_alloc_destroy(point_allocator);
 
     glDeleteBuffers(1, &vertex_buffer);
