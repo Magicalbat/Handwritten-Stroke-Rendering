@@ -124,6 +124,8 @@ int main(void) {
     vec2f prev_mouse_pos = win->mouse_pos;
     vec2f prev_point = prev_mouse_pos;
 
+    b32 erase = false;
+
     os_time_init();
 
     u64 prev_frame = os_now_usec();
@@ -154,13 +156,6 @@ int main(void) {
             view.center.x += move_speed * delta;
         }
 
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_Q)) {
-            view.rotation += 3.1415926535f * delta;
-        }
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
-            view.rotation -= 3.1415926535f * delta;
-        }
-
         mat3f_from_view(&view_mat, view);
         mat3f_inverse(&inv_view_mat, &view_mat);
 
@@ -170,21 +165,39 @@ int main(void) {
         };
         mouse_pos = mat3f_mul_vec2f(&inv_view_mat, mouse_pos);
 
-        if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
-        } else {
-            if (GFX_IS_MOUSE_JUST_DOWN(win, GFX_MB_LEFT)) {
+        if (GFX_IS_MOUSE_JUST_DOWN(win, GFX_MB_LEFT)) {
+            if (GFX_IS_KEY_DOWN(win, GFX_KEY_E)) {
+                erase = true;
+            } else {
+                erase = false;
+
+                // TODO: object pooling, i am leaking memory here
                 lines[num_lines++] = draw_lines_create(perm_arena, point_allocator, (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f }, 10.0f);
                 draw_lines_add_point(lines[num_lines - 1], mouse_pos);
-            } else if (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
-                if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.001f) {
-                    draw_lines_add_point(lines[num_lines - 1], mouse_pos);
-                    prev_point = mouse_pos;
-                } else {
-                    draw_lines_change_last(lines[num_lines - 1], mouse_pos);
-                }
+            }
+        } else if (!erase && GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
+            if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.001f) {
+                draw_lines_add_point(lines[num_lines - 1], mouse_pos);
+                prev_point = mouse_pos;
+            } else {
+                draw_lines_change_last(lines[num_lines - 1], mouse_pos);
             }
         }
         prev_mouse_pos = mouse_pos;
+
+        for (i64 i = 0; i < num_lines; i++) {
+            if (erase && GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && draw_lines_collide_circle(lines[i], (circlef){ mouse_pos, 25 })) {
+                draw_lines_destroy(lines[i]);
+                num_lines--;
+
+                for (i64 j = i; j < num_lines; j++) {
+                    lines[j] = lines[j + 1];
+                }
+                lines[num_lines] = NULL;
+
+                i--;
+            }
+        }
 
         gfx_win_clear(win);
 
@@ -222,14 +235,13 @@ int main(void) {
             draw_lines_draw(lines[i], shaders, win, view);
         }
 
-
-        glUseProgram(basic_program);
-        glUniform4f(basic_col_loc, 0.0f, 1.0f, 0.0f, 0.25f);
-        for (u32 i = 0; i < num_lines; i++) {
+        if (erase && GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT)) {
+            glUseProgram(basic_program);
+            glUniform4f(basic_col_loc, 0.0f, 1.0f, 0.0f, 0.5f);
             glBindVertexArray(vertex_array);
             glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
 
-            rectf bb = lines[i]->bounding_box;
+            rectf bb = { mouse_pos.x - 25.0f, mouse_pos.y - 25.0f, 50.0f, 50.0f };
             vec2f verts[] = {
                 { bb.x, bb.y + bb.h },
                 { bb.x, bb.y },
@@ -245,7 +257,6 @@ int main(void) {
             glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
 
             glDisableVertexAttribArray(0);
-
         }
 
         gfx_win_swap_buffers(win);

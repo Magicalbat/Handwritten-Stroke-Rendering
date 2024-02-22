@@ -668,7 +668,6 @@ void draw_lines_add_point_internal(draw_lines* lines, vec2f point, b32 new) {
             return;
         }
 
-
         if (!new) {
             // Replacing the two more recent verts
             lines->backend->num_verts -= 2;
@@ -860,6 +859,59 @@ void draw_lines_add_point(draw_lines* lines, vec2f point) {
 }
 void draw_lines_change_last(draw_lines* lines, vec2f new_last) {
     draw_lines_add_point_internal(lines, new_last, true);
+}
+
+b32 draw_lines_collide_circle(draw_lines* lines, circlef circle) {
+    if (lines == NULL || lines->points.size == 0) {
+        fprintf(stderr, "Cannot collide circle with lines: lines is NULL or has zero points\n");
+        return false;
+    }
+
+    if (!rectf_collide_circlef(lines->bounding_box, circle)) {
+        return false;
+    }
+
+    if (lines->points.size == 1 &&
+        vec2f_dist(lines->points.first->points[0], circle.pos) < lines->width + circle.r) {
+            return true;
+    }
+
+    f32 dist_threshold = (lines->width * 0.5f + circle.r) * (lines->width * 0.5f + circle.r);
+
+    vec2f p0, p1;
+    p1 = lines->points.first->points[0];
+
+    draw_point_bucket* cur_bucket = lines->points.first;
+    u32 cur_num_buckets = 0;
+
+    for (u32 i = 0; i < lines->points.size - 1; i++) {
+        p0 = p1;
+
+        if (i + 1 >= (cur_num_buckets + 1) * DRAW_POINT_BUCKET_SIZE) {
+            if (cur_bucket->next == NULL) {
+                fprintf(stderr, "Cannot update lines, not enough point buckets\n");
+
+                return false;
+            }
+
+            cur_bucket = cur_bucket->next;
+            cur_num_buckets++;
+        }
+        p1 = cur_bucket->points[i + 1 - cur_num_buckets * DRAW_POINT_BUCKET_SIZE];
+
+        vec2f line_vec = vec2f_sub(p1, p0);
+        vec2f point_vec = vec2f_sub(circle.pos, p0);
+        f32 t = vec2f_dot(point_vec, line_vec) / vec2f_dot(line_vec, line_vec);
+        t = CLAMP(t, 0, 1);
+
+        f32 sqr_dist = vec2f_sqr_dist(point_vec, vec2f_scl(line_vec, t));
+
+        if (sqr_dist < dist_threshold) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 #define GLSL_SOURCE(version, shader) "#version " #version " core \n" STRINGIFY(shader)

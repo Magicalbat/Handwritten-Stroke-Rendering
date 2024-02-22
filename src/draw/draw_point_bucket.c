@@ -1,5 +1,6 @@
 #include "draw_point_bucket.h"
 
+#include <stdio.h>
 #include <string.h>
 
 draw_point_allocator* draw_point_alloc_create(mg_arena* backing_arena) {
@@ -38,8 +39,9 @@ draw_point_bucket* draw_point_alloc_alloc(draw_point_allocator* point_alloc) {
 
         SLL_POP_FRONT(point_alloc->free_first, point_alloc->free_last);
 
-        // This should work because the array is a part of the struct, not a pointer
-        memset(out, 0, sizeof(draw_point_bucket) * DRAW_POINT_BUCKET_SIZE);
+        out->size = 0;
+        out->next = NULL;
+        memset(out->points, 0, sizeof(vec2f) * DRAW_POINT_BUCKET_SIZE);
 
         return out;
     }

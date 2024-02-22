@@ -19,7 +19,7 @@ b32 rectf_collide_rectf(rectf a, rectf b) {
     );
 }
 // https://www.jeffreythompson.org/collision-detection/circle-rect.php
-b32 rectf_collide_circlf(rectf rect, circlef circle) {
+b32 rectf_collide_circlef(rectf rect, circlef circle) {
     // temporary variables to set edges for testing
     vec2f test_pos = circle.pos;
 

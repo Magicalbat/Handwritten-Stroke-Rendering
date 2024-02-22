@@ -36,5 +36,7 @@ void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width);
 void draw_lines_add_point(draw_lines* lines, vec2f point);
 void draw_lines_change_last(draw_lines* lines, vec2f new_last);
 
+b32 draw_lines_collide_circle(draw_lines* lines, circlef circle);
+
 #endif // DRAW_LINES_H
 
