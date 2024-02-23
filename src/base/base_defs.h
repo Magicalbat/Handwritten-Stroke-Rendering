@@ -26,6 +26,8 @@ static_assert(sizeof(f64) == 8, "f64 size");
 
 #if defined(_WIN32)
 #   define PLATFORM_WIN32
+#elif defined(__EMSCRIPTEN__)
+#   define PLATFORM_WASM
 #elif defined(__linux__)
 #   define PLATFORM_LINUX
 #endif

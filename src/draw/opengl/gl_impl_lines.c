@@ -402,12 +402,10 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
-    glEnableVertexAttribArray(3);
 
     glVertexAttribDivisor(0, 1);
     glVertexAttribDivisor(1, 1);
     glVertexAttribDivisor(2, 1);
-    glVertexAttribDivisor(3, 1);
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p0));
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_corner), (void*)offsetof(line_corner, p1));
@@ -418,12 +416,10 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
     glVertexAttribDivisor(0, 0);
     glVertexAttribDivisor(1, 0);
     glVertexAttribDivisor(2, 0);
-    glVertexAttribDivisor(3, 0);
 
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
     glDisableVertexAttribArray(2);
-    glDisableVertexAttribArray(3);
 
     glUseProgram(0);
     glBindVertexArray(0);
@@ -721,9 +717,9 @@ void draw_lines_add_point_internal(draw_lines* lines, vec2f point, b32 new) {
         u32* num_verts = &lines->backend->num_verts;
 
         // These will not always be filled the same amount
-        line_vert new_verts[6] = { 0 };
-        u32 new_indices[6] = { 0 };
-        line_corner new_corners[2] = { 0 };
+        line_vert new_verts[6];
+        u32 new_indices[6];
+        line_corner new_corners[2];
 
         // Points
         vec2f p0, p1, p2;
@@ -942,18 +938,16 @@ b32 draw_lines_collide_circle(draw_lines* lines, circlef circle) {
     return false;
 }
 
-#define GLSL_SOURCE(version, shader) "#version " #version " core \n" STRINGIFY(shader)
-
 static const char* line_seg_vert = GLSL_SOURCE(
     330,
+    
     layout (location = 0) in vec2 a_pos;
+    out float side;
 
     uniform mat3 u_view_mat;
 
-    out float side;
-
     void main() {
-        side = ((gl_VertexID % 2) - 0.5) * 2.0;
+        side = (float(gl_VertexID % 2) - 0.5) * 2.0;
 
         vec2 pos = (u_view_mat * vec3(a_pos, 1.0)).xy;
         gl_Position = vec4(pos, 0.0, 1.0);
@@ -970,26 +964,29 @@ static const char* line_seg_frag = GLSL_SOURCE(
     in float side;
 
     void main() {
-        float b = smoothstep(0.0, AA_SMOOTHING / u_display_width, 1.0 - abs(side));
-        out_col = vec4(u_col.xyz, u_col.w * b);
+        float b = smoothstep(0.0, float(AA_SMOOTHING) / u_display_width, 1.0 - abs(side));
+        vec4 col = vec4(u_col.xyz, u_col.w * b);
+
+        out_col = col;
     }
 );
 
 static const char* corner_vert = GLSL_SOURCE(
     330,
+
     layout (location = 0) in vec2 a_p0;
     layout (location = 1) in vec2 a_p1;
     layout (location = 2) in vec2 a_p2;
-
-    uniform float u_line_width;
-    uniform mat3 u_view_mat;
-    uniform vec2 u_screen;
 
     out vec2 pos;
     flat out vec2 p0;
     flat out vec2 p1;
     flat out vec2 p2;
     flat out float display_width;
+
+    uniform float u_line_width;
+    uniform mat3 u_view_mat;
+    uniform vec2 u_screen;
 
     // Returns length of z component
     float crs(vec2 a, vec2 b) {
@@ -1082,14 +1079,14 @@ static const char* corner_frag = GLSL_SOURCE(
     330,
     layout (location = 0) out vec4 out_col;
 
-    uniform float u_line_width;
-    uniform vec4 u_col;
-
     in vec2 pos;
     flat in vec2 p0;
     flat in vec2 p1;
     flat in vec2 p2;
     flat in float display_width;
+
+    uniform float u_line_width;
+    uniform vec4 u_col;
 
     float line_seg_sdf(vec2 p, vec2 a, vec2 b) {
         vec2 ba = b - a;
@@ -1101,8 +1098,10 @@ static const char* corner_frag = GLSL_SOURCE(
     void main() {
         float dist = min(line_seg_sdf(pos, p0, p1), line_seg_sdf(pos, p1, p2)) - u_line_width * 0.5;
         dist /= u_line_width;
-        float alpha = smoothstep(0.0, -(AA_SMOOTHING * 0.5f) / display_width, dist);
-        out_col = vec4(u_col.xyz, u_col.w * alpha);
+        float alpha = smoothstep(0.0, -(float(AA_SMOOTHING) * 0.5f) / display_width, dist);
+        vec4 col = vec4(u_col.xyz, u_col.w * alpha);
+
+        out_col = col;
     }
 );
 

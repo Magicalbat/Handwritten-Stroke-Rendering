@@ -4,3 +4,6 @@ Makefile
 compile_commands.json
 .cache
 **.bat
+**.sh
+**.js
+**.wasm

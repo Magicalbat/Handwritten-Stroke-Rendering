@@ -11,7 +11,17 @@
 #elif defined(PLATFORM_LINUX)
 #    include <GL/gl.h>
 #    include <unistd.h>
+#elif defined(PLATFORM_WASM)
+#   include <GLES3/gl3.h>
 #endif
+
+#ifdef PLATFORM_WASM
+#   define GLSL_SOURCE(version, shader) "#version 300 es\nprecision mediump float;\n" STRINGIFY(shader)
+#else
+#   define GLSL_SOURCE(version, shader) "#version " #version " core \n" STRINGIFY(shader)
+#endif
+
+#ifndef __EMSCRIPTEN__
 
 typedef unsigned int GLenum;
 typedef unsigned char GLboolean;
@@ -681,5 +691,7 @@ typedef struct __GLsync *GLsync;
 #define GL_NUM_SAMPLE_COUNTS              0x9380
 #define GL_TEXTURE_IMMUTABLE_LEVELS       0x82DF
 #define GL_SHADER_STORAGE_BUFFER          0x90D2
+
+#endif // __EMSCRIPTEN__
 
 #endif // OPENGL_DEFS_H

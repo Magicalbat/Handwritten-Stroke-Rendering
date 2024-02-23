@@ -233,7 +233,7 @@ extern "C" {
 
 #define MGA_ALIGN_UP_POW2(x, b) (((x) + ((b) - 1)) & (~((b) - 1)))
 
-#ifdef MGA_PLATFORM_WIN32
+#if defined(MGA_PLATFORM_WIN32)
 
 #ifndef UNICODE
     #define UNICODE
@@ -263,9 +263,7 @@ static mga_u32 _mga_mem_pagesize() {
     return (mga_u32)si.dwPageSize;
 }
 
-#endif // MGA_PLATFORM_WIN32
-
-#if defined(MGA_PLATFORM_LINUX) || defined(MGA_PLATFORM_APPLE)
+#elif defined(MGA_PLATFORM_LINUX) || defined(MGA_PLATFORM_APPLE)
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -289,9 +287,7 @@ static mga_u32 _mga_mem_pagesize() {
     return (mga_u32)sysconf(_SC_PAGESIZE);
 }
 
-#endif // MGA_PLATFORM_LINUX || MGA_PLATFORM_APPLE
-
-#ifdef MGA_PLATFORM_UNKNOWN
+#else
 
 static void* _mga_mem_reserve(mga_u64 size) { MGA_UNUSED(size); return NULL; }
 static void _mga_mem_commit(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UNUSED(size); }
@@ -299,7 +295,7 @@ static void _mga_mem_decommit(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UN
 static void _mga_mem_release(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UNUSED(size); }
 static mga_u32 _mga_mem_pagesize(){ return 4096; }
 
-#endif // MGA_PLATFORM_UNKNOWN
+#endif 
 
 // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
 static mga_u32 _mga_round_pow2(mga_u32 v) {

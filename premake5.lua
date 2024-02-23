@@ -4,6 +4,11 @@ workspace "Line-Render-Test"
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
+newoption {
+    trigger = "wasm",
+    description = "Choose whether or not to make build files for wasm",
+}
+
 project "Line-Render-Test"
     language "C"
     location "src"
@@ -24,21 +29,56 @@ project "Line-Render-Test"
     targetprefix ""
 
     warnings "Extra"
-    architecture "x64"
     toolset "clang"
+    
+    filter { "action:not vs*" }
+    	buildoptions { "-fPIC" }
 
-    filter { "action:not vs*", "configurations:debug" }
-    	buildoptions { "-fsanitize=address" }
-    	linkoptions { "-fsanitize=address" }
+	if _OPTIONS["wasm"] then
+        filter "action:ecc"
+            -- This is just to make the clang language server happy
+            defines "__EMSCRIPTEN__"
+            includedirs "../emsdk/upstream/emscripten/system/include/"
 
-    filter "system:linux"
-        links {
-            "m", "X11", "GL", "GLX",
-        }
+        filter "options:wasm"
+            buildoptions {
+                "-fPIC",
+            }
 
-    filter { "system:windows", "action:*gmake*", "configurations:debug" }
-        linkoptions { "-g" }
+            linkoptions {
+                "-sWASM=1",
+                "-sASYNCIFY=1",
+                "-sALLOW_MEMORY_GROWTH=1",
+                "-sOFFSCREEN_FRAMEBUFFER=1",
+                "-sMIN_WEBGL_VERSION=2",
+                "-sMAIN_MODULE=2",
+            }
+            links { "m", "GL" }
 
+            targetextension ".js"
+    else
+        architecture "x64"
+
+        filter { "action:not vs*", "configurations:debug" }
+            buildoptions { "-fsanitize=address" }
+            linkoptions { "-fsanitize=address" }
+
+        filter "system:linux"
+            links {
+                "m", "X11", "GL", "GLX",
+            }
+
+        filter { "system:windows", "action:*gmake*", "configurations:debug" }
+            linkoptions { "-g" }
+
+        filter "system:windows"
+            systemversion "latest"
+
+            links {
+                "gdi32", "kernel32", "user32", "opengl32"
+            }
+    end            
+        
     filter "configurations:debug"
         symbols "On"
         defines { "DEBUG" }
@@ -47,9 +87,4 @@ project "Line-Render-Test"
         optimize "On"
         defines { "NDEBUG" }
 
-    filter "system:windows"
-        systemversion "latest"
-
-        links {
-            "gdi32", "kernel32", "user32", "opengl32"
-        }
+    

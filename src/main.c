@@ -12,13 +12,12 @@
 
 #include "draw/draw.h"
 
-#define WIDTH 1280
-#define HEIGHT 720
-
-#define GLSL_SOURCE(version, shader) "#version " #version " core \n" STRINGIFY(shader)
+#define WIDTH 640
+#define HEIGHT 360
 
 static const char* basic_vert = GLSL_SOURCE(
     330,
+
     layout (location = 0) in vec2 a_pos;
 
     uniform mat3 u_view_mat;
@@ -31,12 +30,13 @@ static const char* basic_vert = GLSL_SOURCE(
 
 static const char* basic_frag = GLSL_SOURCE(
     330,
+
     layout (location = 0) out vec4 out_col;
 
     uniform vec4 u_col;
 
     void main() {
-       out_col = u_col;
+        out_col = u_col;
     }
 );
 
@@ -52,6 +52,7 @@ int main(void) {
     mg_arena* perm_arena = mga_create(&desc);
 
     gfx_window* win = gfx_win_create(perm_arena, WIDTH, HEIGHT, STR8("Line Render Test"));
+    gfx_win_make_current(win);
 
     u32 basic_program = glh_create_shader(basic_vert, basic_frag);
 
@@ -134,7 +135,9 @@ int main(void) {
         f32 delta = (f32)(cur_frame - prev_frame) / 1e6;
         prev_frame = cur_frame;
 
+#ifndef PLATFORM_WASM
         gfx_win_process_events(win);
+#endif
 
         // Update
 
@@ -157,6 +160,7 @@ int main(void) {
         }
 
         mat3f_from_view(&view_mat, view);
+
         mat3f_inverse(&inv_view_mat, &view_mat);
 
         vec2f mouse_pos = (vec2f){
@@ -185,11 +189,9 @@ int main(void) {
             (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) || GFX_IS_MOUSE_JUST_UP(win, GFX_MB_LEFT)) &&
             !vec2f_eq(mouse_pos, prev_mouse_pos)) {
 
-            if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.001f) {
+            if (!vec2f_eq(mouse_pos, prev_point)) {
                 draw_lines_add_point(lines[num_lines - 1], mouse_pos);
                 prev_point = mouse_pos;
-            } else {
-                draw_lines_change_last(lines[num_lines - 1], mouse_pos);
             }
         }
         prev_mouse_pos = mouse_pos;
@@ -272,7 +274,11 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        os_sleep_ms(4);
+#ifdef PLATFORM_WASM
+        gfx_win_process_events(win);
+#endif
+
+        os_sleep_ms(2);
     }
 
     for (u32 i = 0; i < num_lines; i++) {
