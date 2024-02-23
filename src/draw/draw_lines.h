@@ -30,6 +30,10 @@ draw_lines* draw_lines_from_points(mg_arena* arena, draw_point_allocator* alloca
 draw_lines* draw_lines_create(mg_arena* arena, draw_point_allocator* allocator, vec4f col, f32 line_width);
 void draw_lines_destroy(draw_lines* lines);
 
+// Deletes all the points
+void draw_lines_clear(draw_lines* lines);
+void draw_lines_reinit(draw_lines* lines, vec4f col, f32 width);
+
 void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders, const gfx_window* win, viewf view);
 // Updates the geometry of the lines with the new color and width
 void draw_lines_update(draw_lines* lines, vec4f col, f32 line_width);

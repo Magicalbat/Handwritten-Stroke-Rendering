@@ -320,7 +320,7 @@ void draw_lines_destroy(draw_lines* lines) {
         return;
     }
 
-    draw_point_list_destroy(&lines->points);
+    draw_point_list_clear(&lines->points);
 
     glDeleteVertexArrays(1, &lines->backend->segment_array);
     glDeleteVertexArrays(1, &lines->backend->corner_array);
@@ -328,6 +328,34 @@ void draw_lines_destroy(draw_lines* lines) {
     glDeleteBuffers(1, &lines->backend->vert_buffer);
     glDeleteBuffers(1, &lines->backend->index_buffer);
     glDeleteBuffers(1, &lines->backend->corner_buffer);
+}
+
+void draw_lines_clear(draw_lines* lines) {
+    if (lines == NULL) {
+        fprintf(stderr, "Cannot clear NULL lines\n");
+        return;
+    }
+
+    draw_point_list_clear(&lines->points);
+
+    lines->bounding_box = (rectf){ 0 };
+
+    lines->backend->num_verts = 0;
+    lines->backend->num_indices = 0;
+    lines->backend->num_corners = 0;
+
+    lines->backend->last_points[0] = (vec2f){ 0 };
+    lines->backend->last_points[1] = (vec2f){ 0 };
+    lines->backend->last_points[2] = (vec2f){ 0 };
+}
+void draw_lines_reinit(draw_lines* lines, vec4f col, f32 width) {
+    if (lines == NULL) {
+        fprintf(stderr, "Cannot reinit NULL lines\n");
+        return;
+    }
+
+    lines->color = col;
+    lines->width = width;
 }
 
 void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders, const gfx_window* win, viewf view) {
@@ -889,7 +917,7 @@ b32 draw_lines_collide_circle(draw_lines* lines, circlef circle) {
 
         if (i + 1 >= (cur_num_buckets + 1) * DRAW_POINT_BUCKET_SIZE) {
             if (cur_bucket->next == NULL) {
-                fprintf(stderr, "Cannot update lines, not enough point buckets\n");
+                fprintf(stderr, "Cannot collide lines, not enough point buckets\n");
 
                 return false;
             }

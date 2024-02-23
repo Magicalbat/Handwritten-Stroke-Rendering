@@ -27,12 +27,22 @@ draw_point_allocator* draw_point_alloc_create(mg_arena* backing_arena) {
     return point_alloc;
 }
 void draw_point_alloc_destroy(draw_point_allocator* point_alloc) {
+    if (point_alloc == NULL) {
+        fprintf(stderr, "Cannot destroy NULL point allocator\n");
+        return;
+    }
+
     if (point_alloc->owned_arena) {
         mga_destroy(point_alloc->backing_arena);
     }
 }
 
 draw_point_bucket* draw_point_alloc_alloc(draw_point_allocator* point_alloc) {
+    if (point_alloc == NULL) {
+        fprintf(stderr, "Cannot alloc with NULL point allocator\n");
+        return NULL;
+    }
+
     // Free node in list exists
     if (point_alloc->free_first != NULL) {
         draw_point_bucket* out = point_alloc->free_first;
@@ -51,10 +61,20 @@ draw_point_bucket* draw_point_alloc_alloc(draw_point_allocator* point_alloc) {
     return out;
 }
 void draw_point_alloc_free(draw_point_allocator* point_alloc, draw_point_bucket* bucket) {
+    if (point_alloc == NULL) {
+        fprintf(stderr, "Cannot free with NULL point allocator\n");
+        return;
+    }
+
     SLL_PUSH_FRONT(point_alloc->free_first, point_alloc->free_last, bucket);
 }
 
 void draw_point_list_add(draw_point_list* list, vec2f point) {
+    if (list == NULL) {
+        fprintf(stderr, "Cannot add point to NULL list\n");
+        return;
+    }
+
     list->size++;
 
     if (list->last == NULL || list->last->size == DRAW_POINT_BUCKET_SIZE) {
@@ -69,12 +89,19 @@ void draw_point_list_add(draw_point_list* list, vec2f point) {
 
     list->last->points[list->last->size++] = point;
 }
-void draw_point_list_destroy(draw_point_list* list) {
+void draw_point_list_clear(draw_point_list* list) {
+    if (list == NULL) {
+        fprintf(stderr, "Cannot clear NULL list\n");
+        return;
+    }
+
     while (list->first != NULL) {
         draw_point_bucket* bucket = list->first;
         SLL_POP_FRONT(list->first, list->last);
 
         draw_point_alloc_free(list->allocator, bucket);
     }
+
+    list->size = 0;
 }
 

@@ -38,6 +38,6 @@ void draw_point_alloc_free(draw_point_allocator* point_alloc, draw_point_bucket*
 
 // Create point lists on the stack
 void draw_point_list_add(draw_point_list* list, vec2f point);
-void draw_point_list_destroy(draw_point_list* list);
+void draw_point_list_clear(draw_point_list* list);
 
 #endif // DRAW_POINT_BUCKET_H

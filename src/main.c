@@ -171,11 +171,20 @@ int main(void) {
             } else {
                 erase = false;
 
-                // TODO: object pooling, i am leaking memory here
-                lines[num_lines++] = draw_lines_create(perm_arena, point_allocator, (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f }, 10.0f);
+                num_lines++;
+
+                if (lines[num_lines - 1] == NULL) {
+                    lines[num_lines - 1] = draw_lines_create(perm_arena, point_allocator, (vec4f){ 1.0f, 1.0f, 1.0f, 1.0f }, 5.0f);
+                } else {
+                    draw_lines_reinit(lines[num_lines - 1], (vec4f){ 1, 1, 1, 1}, 5.0f);
+                }
+
                 draw_lines_add_point(lines[num_lines - 1], mouse_pos);
             }
-        } else if (!erase && GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && !vec2f_eq(mouse_pos, prev_mouse_pos)) {
+        } else if (!erase &&
+            (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) || GFX_IS_MOUSE_JUST_UP(win, GFX_MB_LEFT)) &&
+            !vec2f_eq(mouse_pos, prev_mouse_pos)) {
+
             if (vec2f_dist(mouse_pos, prev_point) > view.width * 0.001f) {
                 draw_lines_add_point(lines[num_lines - 1], mouse_pos);
                 prev_point = mouse_pos;
@@ -187,13 +196,15 @@ int main(void) {
 
         for (i64 i = 0; i < num_lines; i++) {
             if (erase && GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) && draw_lines_collide_circle(lines[i], (circlef){ mouse_pos, 25 })) {
-                draw_lines_destroy(lines[i]);
+                draw_lines_clear(lines[i]);
+                draw_lines* cleared_line = lines[i];
+
                 num_lines--;
 
                 for (i64 j = i; j < num_lines; j++) {
                     lines[j] = lines[j + 1];
                 }
-                lines[num_lines] = NULL;
+                lines[num_lines] = cleared_line;
 
                 i--;
             }
@@ -261,7 +272,7 @@ int main(void) {
 
         gfx_win_swap_buffers(win);
 
-        os_sleep_ms(16);
+        os_sleep_ms(4);
     }
 
     for (u32 i = 0; i < num_lines; i++) {
