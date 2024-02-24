@@ -16,6 +16,11 @@ typedef struct { f32 m[9];  } mat3f;
 typedef struct { f32 m[16]; } mat4f;
 
 typedef struct {
+    // Coefficients for t^3 -> 1
+    vec2f a, b, c, d;
+} cubic_bezier;
+
+typedef struct {
     vec2f center;
     f32 aspect_ratio;
     f32 width;
@@ -39,6 +44,12 @@ f32 vec2f_dist(vec2f a, vec2f b);
 vec2f vec2f_nrm(vec2f v);
 vec2f vec2f_prp(vec2f v);
 b32 vec2f_eq(vec2f a, vec2f b);
+// Reflects d with normal of n
+vec2f vec2f_ref(vec2f d, vec2f n);
+
+// Pass in control points
+cubic_bezier cbezier_create(vec2f p0, vec2f p1, vec2f p2, vec2f p3);
+vec2f cbezier_calc(const cubic_bezier* bez, f32 t);
 
 void mat3f_transform(mat3f* mat, vec2f scale, vec2f offset, f32 rotation);
 void mat3f_from_view(mat3f* mat, viewf v);

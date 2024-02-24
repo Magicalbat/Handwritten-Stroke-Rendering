@@ -30,9 +30,6 @@ project "Line-Render-Test"
 
     warnings "Extra"
     toolset "clang"
-    
-    filter { "action:not vs*" }
-    	buildoptions { "-fPIC" }
 
 	if _OPTIONS["wasm"] then
         filter "action:ecc"

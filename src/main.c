@@ -15,6 +15,8 @@
 #define WIDTH 640
 #define HEIGHT 360
 
+#define INTERP_MARGIN 0.02f
+
 static const char* basic_vert = GLSL_SOURCE(
     330,
 
@@ -124,6 +126,7 @@ int main(void) {
 
     vec2f prev_mouse_pos = win->mouse_pos;
     vec2f prev_point = prev_mouse_pos;
+    vec2f prev_prev_point = prev_mouse_pos;
 
     b32 erase = false;
 
@@ -184,13 +187,42 @@ int main(void) {
                 }
 
                 draw_lines_add_point(lines[num_lines - 1], mouse_pos);
+
+                prev_point = mouse_pos;
+                prev_prev_point = prev_point;
             }
         } else if (!erase &&
             (GFX_IS_MOUSE_DOWN(win, GFX_MB_LEFT) || GFX_IS_MOUSE_JUST_UP(win, GFX_MB_LEFT)) &&
             !vec2f_eq(mouse_pos, prev_mouse_pos)) {
 
             if (!vec2f_eq(mouse_pos, prev_point)) {
-                draw_lines_add_point(lines[num_lines - 1], mouse_pos);
+                f32 prev_dist = vec2f_dist(prev_point, mouse_pos);
+                u32 num_points = (u32)roundf(prev_dist / (view.width * INTERP_MARGIN)) + 1;
+
+                const f32 smoothing = 0.25f;
+                vec2f control_offset = vec2f_scl(vec2f_sub(prev_point, prev_prev_point), smoothing);
+                vec2f norm = vec2f_prp(vec2f_nrm(vec2f_sub(mouse_pos, prev_point)));
+
+                // Defining bezier control points based on hermite spline
+                vec2f p0 = prev_point;
+                vec2f p1 = vec2f_add(prev_point, control_offset);
+                vec2f p2 = vec2f_sub(mouse_pos, vec2f_ref(control_offset, norm));
+                vec2f p3 = mouse_pos;
+
+                cubic_bezier bez = cbezier_create(p0, p1, p2, p3);
+
+                f32 t_interval = 1.0f / (f32)(num_points + 1);
+                f32 t = t_interval;
+
+                for (u32 i = 0; i < num_points; i++) {
+                    vec2f p = cbezier_calc(&bez, t);
+
+                    draw_lines_add_point(lines[num_lines - 1], p);
+
+                    t += t_interval;
+                }
+
+                prev_prev_point = prev_point;
                 prev_point = mouse_pos;
             }
         }

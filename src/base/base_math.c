@@ -79,6 +79,36 @@ vec2f vec2f_nrm(vec2f v) {
 b32 vec2f_eq(vec2f a, vec2f b) {
     return (a.x == b.x && a.y == b.y);
 }
+vec2f vec2f_ref(vec2f d, vec2f n) {
+    return vec2f_sub(d, vec2f_scl(n, 2.0f * vec2f_dot(d, n)));
+}
+
+cubic_bezier cbezier_create(vec2f p0, vec2f p1, vec2f p2, vec2f p3) {
+    cubic_bezier out;
+    out.a = p3;
+    out.a = vec2f_sub(out.a, vec2f_scl(p2, 3.0f));
+    out.a = vec2f_add(out.a, vec2f_scl(p1, 3.0f));
+    out.a = vec2f_sub(out.a, p0);
+
+    out.b = p2;
+    out.b = vec2f_sub(out.b, vec2f_scl(p1, 2.0f));
+    out.b = vec2f_add(out.b, p0);
+
+    out.c = vec2f_sub(p1, p0);
+
+    out.d = p0;
+
+    return out;
+}
+vec2f cbezier_calc(const cubic_bezier* bez, f32 t) {
+    vec2f out = bez->d;
+
+    out = vec2f_add(out, vec2f_scl(bez->c, 3.0f * t));
+    out = vec2f_add(out, vec2f_scl(bez->b, 3.0f * t * t));
+    out = vec2f_add(out, vec2f_scl(bez->a, t * t * t));
+
+    return out;
+}
 
 void mat3f_transform(mat3f* mat, vec2f scale, vec2f offset, f32 rotation) {
     f32 r_sin = sinf(rotation);
