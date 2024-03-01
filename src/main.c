@@ -12,10 +12,10 @@
 
 #include "draw/draw.h"
 
-#define WIDTH 640
-#define HEIGHT 360
+#define WIDTH 1280
+#define HEIGHT 720
 
-#define INTERP_MARGIN 0.02f
+#define INTERP_MARGIN 0.01f
 
 static const char* basic_vert = GLSL_SOURCE(
     330,
@@ -129,6 +129,7 @@ int main(void) {
     vec2f prev_prev_point = prev_mouse_pos;
 
     b32 erase = false;
+    b32 extending_point = false;
 
     os_time_init();
 
@@ -199,23 +200,22 @@ int main(void) {
                 f32 prev_dist = vec2f_dist(prev_point, mouse_pos);
                 u32 num_points = (u32)roundf(prev_dist / (view.width * INTERP_MARGIN)) + 1;
 
-                const f32 smoothing = 0.25f;
-                vec2f control_offset = vec2f_scl(vec2f_sub(prev_point, prev_prev_point), smoothing);
-                vec2f norm = vec2f_prp(vec2f_nrm(vec2f_sub(mouse_pos, prev_point)));
+                extending_point = false;
 
-                // Defining bezier control points based on hermite spline
-                vec2f p0 = prev_point;
-                vec2f p1 = vec2f_add(prev_point, control_offset);
-                vec2f p2 = vec2f_sub(mouse_pos, vec2f_ref(control_offset, norm));
-                vec2f p3 = mouse_pos;
-
-                cubic_bezier bez = cbezier_create(p0, p1, p2, p3);
+                // Catmull-Rom endpoint interpolation coefficients
+                // https://danceswithcode.net/engineeringnotes/interpolation/interpolation.html
+                vec2f c0 = prev_point;
+                vec2f c1 = vec2f_scl(vec2f_sub(mouse_pos, prev_prev_point), 0.5f);
+                vec2f c2 = vec2f_add(vec2f_sub(mouse_pos, vec2f_scl(prev_point, 2.0f)), prev_prev_point);
+                c2 = vec2f_scl(c2, 0.5f);
 
                 f32 t_interval = 1.0f / (f32)(num_points + 1);
                 f32 t = t_interval;
 
                 for (u32 i = 0; i < num_points; i++) {
-                    vec2f p = cbezier_calc(&bez, t);
+                    vec2f p = c0;
+                    p = vec2f_add(p, vec2f_scl(c1, t));
+                    p = vec2f_add(p, vec2f_scl(c2, t * t));
 
                     draw_lines_add_point(lines[num_lines - 1], p);
 
