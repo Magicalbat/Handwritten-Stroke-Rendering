@@ -12,7 +12,6 @@
 typedef struct draw_lines_shaders {
     u32 line_program;
     u32 line_view_mat_loc;
-    u32 line_display_width_loc;
     u32 line_col_loc;
 
     u32 corner_program;
@@ -72,7 +71,6 @@ draw_lines_shaders* draw_lines_shaders_create(mg_arena* arena) {
 
     glUseProgram(shaders->line_program);
     shaders->line_view_mat_loc = glGetUniformLocation(shaders->line_program, "u_view_mat");
-    shaders->line_display_width_loc = glGetUniformLocation(shaders->line_program, "u_display_width");
     shaders->line_col_loc = glGetUniformLocation(shaders->line_program, "u_col");
 
     glUseProgram(shaders->corner_program);
@@ -374,7 +372,6 @@ void draw_lines_draw(const draw_lines* lines, const draw_lines_shaders* shaders,
     glUseProgram(shaders->line_program);
     glUniformMatrix3fv(shaders->line_view_mat_loc, 1, GL_FALSE, view_mat.m);
     glUniform4f(shaders->line_col_loc, lines->color.x, lines->color.y, lines->color.z, lines->color.w);
-    glUniform1f(shaders->line_display_width_loc, lines->width * ((f32)win->width) / view.width);
 
     glBindVertexArray(lines->backend->segment_array);
     glBindBuffer(GL_ARRAY_BUFFER, lines->backend->vert_buffer);
@@ -959,13 +956,14 @@ static const char* line_seg_frag = GLSL_SOURCE(
     layout (location = 0) out vec4 out_col;
 
     uniform vec4 u_col;
-    uniform float u_display_width;
 
     in float side;
 
     void main() {
-        float b = smoothstep(0.0, float(AA_SMOOTHING) / u_display_width, 1.0 - abs(side));
-        vec4 col = vec4(u_col.xyz, u_col.w * b);
+        float d = 1.0 - abs(side);
+        float blending = fwidth(d);
+        float alpha = smoothstep(-blending, blending, d);
+        vec4 col = vec4(u_col.xyz, u_col.w * alpha);
 
         out_col = col;
     }
@@ -982,7 +980,6 @@ static const char* corner_vert = GLSL_SOURCE(
     flat out vec2 p0;
     flat out vec2 p1;
     flat out vec2 p2;
-    flat out float display_width;
 
     uniform float u_line_width;
     uniform mat3 u_view_mat;
@@ -1002,8 +999,6 @@ static const char* corner_vert = GLSL_SOURCE(
         vec2 n1 = vec2(-l1.y, l1.x);
         vec2 l2 = normalize(p2 - p1);
         vec2 n2 = vec2(-l2.y, l2.x);
-
-        display_width = length((u_view_mat * vec3(n1 * u_line_width, 0.0)).xy * (u_screen * 0.5));
 
         vec2 line_sum = l1 + l2;
         vec2 tangent;
@@ -1083,7 +1078,6 @@ static const char* corner_frag = GLSL_SOURCE(
     flat in vec2 p0;
     flat in vec2 p1;
     flat in vec2 p2;
-    flat in float display_width;
 
     uniform float u_line_width;
     uniform vec4 u_col;
@@ -1098,7 +1092,8 @@ static const char* corner_frag = GLSL_SOURCE(
     void main() {
         float dist = min(line_seg_sdf(pos, p0, p1), line_seg_sdf(pos, p1, p2)) - u_line_width * 0.5;
         dist /= u_line_width;
-        float alpha = smoothstep(0.0, -(float(AA_SMOOTHING) * 0.5f) / display_width, dist);
+        float blending = fwidth(dist);
+        float alpha = smoothstep(0.0, -blending, dist);
         vec4 col = vec4(u_col.xyz, u_col.w * alpha);
 
         out_col = col;
